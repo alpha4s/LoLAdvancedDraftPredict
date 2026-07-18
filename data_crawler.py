@@ -7,36 +7,14 @@ from riotwatcher import LolWatcher, ApiError
 api_key = ''
 watcher = LolWatcher(api_key)
 
-routing_region = ''  # americas, europe, asia
-platform_region = ''      # na1, euw1, kr
+routing_region = ''
+platform_region = ''
 min_matches_to_search = 70000  
 min_apps_per_champ = 5
-
-# Set to True if you want to verify that all 10 players in every lobby are Plat/Emerald/Diamond.
-# Set to False to speed up crawling by ~10x by trusting matchmaking.
-STRICT_LOBBY_CHECK = False
 
 def load_champion_list():
     with open('champions.json', 'r') as f:
         return json.load(f)
-
-def get_player_rank(watcher, platform, summoner_id):
-    for entry in watcher.league.by_summoner(platform, summoner_id):
-        if entry.get('queueType') == 'RANKED_SOLO_5x5':
-            return entry.get('tier')
-    return None
-
-def get_player_rank_cached(cursor, conn, watcher, platform, puuid, summoner_id):
-    cursor.execute('SELECT rank FROM player_ranks WHERE puuid = ?', (puuid,))
-    row = cursor.fetchone()
-    if row is not None:
-        return row[0]
-    
-    rank = get_player_rank(watcher, platform, summoner_id)
-    cache_val = rank if rank is not None else 'UNRANKED'
-    cursor.execute('INSERT OR IGNORE INTO player_ranks (puuid, rank) VALUES (?, ?)', (puuid, cache_val))
-    conn.commit()
-    return cache_val
 
 def get_team_by_roles(participants, team_id):
     roles = ['TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY']
@@ -76,16 +54,6 @@ def get_current_coverage(cursor, all_champs, target_apps):
 def init_db():
     conn = sqlite3.connect('league_data.db')
     cursor = conn.cursor()
-    
-    # Check if matches table is using the old schema (blue_1)
-    cursor.execute("PRAGMA table_info(matches)")
-    columns = [row[1] for row in cursor.fetchall()]
-    if columns and 'blue_1' in columns:
-        print("Detected outdated database schema (blue_1). Upgrading matches database...")
-        cursor.execute("DROP TABLE IF EXISTS matches")
-        cursor.execute("DROP TABLE IF EXISTS processed_players")
-        conn.commit()
-
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS matches (
             match_id TEXT PRIMARY KEY,
@@ -95,12 +63,6 @@ def init_db():
         )
     ''')
     cursor.execute('CREATE TABLE IF NOT EXISTS processed_players (puuid TEXT PRIMARY KEY)')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS player_ranks (
-            puuid TEXT PRIMARY KEY,
-            rank TEXT
-        )
-    ''')
     conn.commit()
     return conn
 
@@ -149,7 +111,6 @@ def crawl():
     print(f"Initial State: {processed_matches} matches")
     print(f"Coverage: {seen}/{total} seen ({p_seen:.1f}%), {met}/{total} at {min_apps_per_champ}+ games ({p_met:.1f}%)")
 
-    # League page state
     league_state = {'tier_idx': 0, 'div_idx': 0, 'page': 1}
     player_entries = deque()
 
@@ -174,10 +135,6 @@ def crawl():
 
         entry = player_entries.popleft()
         puuid = entry['puuid']
-        tier = entry['tier']
-
-        cursor.execute('INSERT OR IGNORE INTO player_ranks (puuid, rank) VALUES (?, ?)', (puuid, tier))
-        conn.commit()
 
         cursor.execute('SELECT 1 FROM processed_players WHERE puuid = ?', (puuid,))
         if cursor.fetchone():
@@ -198,29 +155,6 @@ def crawl():
                     continue
 
                 participants = match['info']['participants']
-                match_platform = match_id.split('_')[0].lower()
-
-                lobby_valid = True
-                if STRICT_LOBBY_CHECK:
-                    for p in participants:
-                        p_summoner_id = p['summonerId']
-                        p_puuid = p['puuid']
-                        try:
-                            p_rank = get_player_rank_cached(cursor, conn, watcher, match_platform, p_puuid, p_summoner_id)
-                            if p_rank != 'UNRANKED' and p_rank not in ['PLATINUM', 'EMERALD', 'DIAMOND']:
-                                print(f"Skipping Match {match_id}: contains invalid rank {p_rank} ({p.get('summonerName', p['puuid'][:10])})")
-                                lobby_valid = False
-                                break
-                        except ApiError as e:
-                            if e.response.status_code == 429:
-                                raise e
-                            else:
-                                lobby_valid = False
-                                break
-
-                if not lobby_valid:
-                    continue
-
                 winner = "BLUE_WIN" if next(t for t in match['info']['teams'] if t['teamId'] == 100)['win'] else "RED_WIN"
                 blue_team = get_team_by_roles(participants, 100)
                 red_team = get_team_by_roles(participants, 200)

@@ -245,15 +245,12 @@ def crawl():
             if e.response.status_code == 429:
                 player_entries.appendleft(entry)
                 retry_after = int(e.response.headers.get('Retry-After', 60))
-                print(f"Rate limited on matches! Sleeping for {retry_after}s...")
+                print(f"Rate limited on matches. Sleeping for {retry_after}s...")
                 time.sleep(retry_after)
 
     conn.close()
-    print(f"\nFinal Quality Report:")
     print(f"  - Total Matches: {processed_matches}")
-    print(f"  - Unique Champions Seen: {seen}/{total}")
     print(f"  - Champions Meeting {min_apps_per_champ} Game Minimum: {met}/{total} ({p_met:.1f}%)")
-    print("Your high-quality dataset is ready for professional training!")
 
 if __name__ == "__main__":
     crawl()

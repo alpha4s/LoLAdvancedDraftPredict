@@ -1,0 +1,9 @@
+champions.json
+league_data.db
+__pycache__/
+*.pyc
+.venv/
+env/
+app.py
+templates/
+static/

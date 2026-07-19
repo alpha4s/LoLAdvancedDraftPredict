@@ -7,7 +7,7 @@ import torch.nn as nn
 import numpy as np
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PORT = 8000
+PORT = int(os.environ.get('PORT', 8000))
 
 # Recreate WideAndDeepDraftNN architecture dynamically
 class WideAndDeepDraftNN(nn.Module):
@@ -132,47 +132,9 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        if self.path in ['', '/', '/index.html']:
-            self.send_response(200)
-            self.send_header('Content-Type', 'text/html')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            file_path = os.path.join(SCRIPT_DIR, 'index.html')
-            with open(file_path, 'rb') as f:
-                self.wfile.write(f.read())
-                
-        elif self.path == '/static/style.css':
-            self.send_response(200)
-            self.send_header('Content-Type', 'text/css')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            file_path = os.path.join(SCRIPT_DIR, 'static', 'style.css')
-            with open(file_path, 'rb') as f:
-                self.wfile.write(f.read())
-                
-        elif self.path == '/static/script.js':
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/javascript')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            file_path = os.path.join(SCRIPT_DIR, 'static', 'script.js')
-            with open(file_path, 'rb') as f:
-                self.wfile.write(f.read())
-                
-        elif self.path == '/champions.json':
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            file_path = os.path.join(SCRIPT_DIR, 'champions.json')
-            with open(file_path, 'rb') as f:
-                self.wfile.write(f.read())
-                
-        else:
-            self.send_response(404)
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(b"Not Found")
+        self.send_response(404)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
 
     def do_POST(self):
         if not model:
@@ -333,8 +295,6 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
 
 def main():
-    os.makedirs(os.path.join(SCRIPT_DIR, 'static'), exist_ok=True)
-    
     handler = RequestHandler
     with socketserver.TCPServer(("", PORT), handler) as httpd:
         print(f"\n=======================================================")

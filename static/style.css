@@ -1,0 +1,581 @@
+/* Flat, Clean, and Minimal Dark Theme CSS */
+:root {
+    --bg-dark: #12141c;
+    --card-bg: #1a1d26;
+    --border-color: #2b2f3d;
+    --gold: #d4ac56;
+    --gold-hover: #ebd59b;
+    --blue-accent: #3886e0;
+    --red-accent: #e04848;
+    --text-primary: #e6ebf5;
+    --text-secondary: #8792a2;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    background-color: var(--bg-dark);
+    color: var(--text-primary);
+    font-family: 'Outfit', sans-serif;
+    min-height: 100vh;
+    padding: 20px;
+}
+
+.container {
+    max-width: 1350px;
+    margin: 0 auto;
+}
+
+header {
+    text-align: center;
+    margin-bottom: 25px;
+}
+
+header h1 {
+    font-size: 2.2rem;
+    font-weight: 800;
+    letter-spacing: 3px;
+    color: var(--text-primary);
+}
+
+.subtitle {
+    font-size: 0.9rem;
+    color: var(--gold);
+    letter-spacing: 4px;
+    font-weight: 600;
+    margin-top: 3px;
+}
+
+.gold-divider {
+    width: 80px;
+    height: 2px;
+    background-color: var(--gold);
+    margin: 10px auto 0;
+}
+
+/* Dashboard Columns */
+.dashboard {
+    display: grid;
+    grid-template-columns: 1fr 1.2fr 1fr;
+    gap: 20px;
+}
+
+@media (max-width: 1000px) {
+    .dashboard {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Flat Card Panels */
+.team-panel {
+    background-color: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 20px;
+}
+
+.blue-team {
+    border-top: 3px solid var(--blue-accent);
+}
+
+.red-team {
+    border-top: 3px solid var(--red-accent);
+}
+
+.team-title {
+    text-align: center;
+    font-size: 1.15rem;
+    font-weight: 800;
+    letter-spacing: 1px;
+    margin-bottom: 15px;
+}
+
+.blue-team .team-title { color: var(--blue-accent); }
+.red-team .team-title { color: var(--red-accent); }
+
+.role-slots {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+/* Role Selection Cards */
+.role-card {
+    height: 55px;
+    background-color: rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 10px 15px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.role-card:hover {
+    background-color: rgba(255, 255, 255, 0.03);
+}
+
+.role-card.active-selection {
+    border-color: var(--gold);
+    background-color: rgba(212, 172, 86, 0.03);
+}
+
+.role-card.drag-over {
+    border-color: var(--text-primary);
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+.role-card.drag-possible {
+    border: 1px dashed var(--gold);
+    background-color: rgba(212, 172, 86, 0.02);
+}
+
+/* User's target slot style rules */
+.role-card.user-target {
+    border: 1px solid var(--gold) !important;
+    background-color: rgba(212, 172, 86, 0.06);
+}
+
+.target-btn {
+    font-size: 0.7rem;
+    font-weight: 800;
+    padding: 3px 7px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-secondary);
+    margin-right: 8px;
+    transition: all 0.15s ease;
+    user-select: none;
+}
+
+.target-btn:hover {
+    border-color: var(--gold);
+    color: var(--gold);
+}
+
+.role-card.user-target .target-btn {
+    background-color: var(--gold);
+    color: #12141c;
+    border-color: var(--gold);
+}
+
+.role-label {
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 1px;
+    color: var(--text-secondary);
+    width: 60px;
+}
+
+.champ-name {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    flex-grow: 1;
+    margin-left: 5px;
+}
+
+.role-card.filled {
+    border-style: solid;
+}
+
+.blue-team .role-card.filled:not(.user-target) {
+    border-color: var(--blue-accent);
+}
+
+.red-team .role-card.filled:not(.user-target) {
+    border-color: var(--red-accent);
+}
+
+.clear-btn {
+    font-size: 1.2rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: none;
+}
+
+.role-card.filled:hover .clear-btn {
+    display: block;
+}
+
+.clear-btn:hover {
+    color: var(--text-primary);
+}
+
+/* Center Panel Console */
+.center-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.action-bar {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+}
+
+.glow-on-hover {
+    width: 200px;
+    height: 44px;
+    border: none;
+    background-color: var(--gold);
+    color: #12141c;
+    cursor: pointer;
+    border-radius: 6px;
+    font-family: inherit;
+    font-weight: 800;
+    letter-spacing: 1px;
+    font-size: 0.9rem;
+    transition: background-color 0.15s ease;
+}
+
+.glow-on-hover:hover {
+    background-color: var(--gold-hover);
+}
+
+.secondary-btn {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    padding: 0 15px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: inherit;
+    font-weight: 600;
+    font-size: 0.8rem;
+    letter-spacing: 0.5px;
+    transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.secondary-btn:hover {
+    border-color: var(--text-primary);
+    color: var(--text-primary);
+}
+
+/* Prediction Output Results */
+.prediction-output {
+    background-color: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 20px;
+    text-align: center;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+}
+
+.hidden {
+    display: none !important;
+}
+
+.winner-announcement h3 {
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 1px;
+    color: var(--text-secondary);
+    margin-bottom: 5px;
+}
+
+/* Probability Progress Bar */
+.bars-container {
+    margin-bottom: 10px;
+}
+
+.prob-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 1.15rem;
+    font-weight: 800;
+    margin-bottom: 5px;
+}
+
+#blue-percent { color: var(--blue-accent); }
+#red-percent { color: var(--red-accent); }
+
+.probability-track {
+    width: 100%;
+    height: 8px;
+    background-color: var(--red-accent);
+    border-radius: 4px;
+    overflow: hidden;
+    display: flex;
+}
+
+.probability-bar-blue {
+    height: 100%;
+    background-color: var(--blue-accent);
+    transition: width 0.6s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.comparison-details p {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+#confidence-label {
+    font-weight: 600;
+    color: var(--gold);
+}
+
+/* Recommender list styling */
+.recommendations-box {
+    margin-top: 15px;
+    border-top: 1px solid var(--border-color);
+    padding-top: 15px;
+    text-align: left;
+}
+
+.recommendations-box.hidden {
+    display: none;
+}
+
+.recommendations-box h4 {
+    font-size: 0.8rem;
+    font-weight: 800;
+    color: var(--gold);
+    margin-bottom: 10px;
+    letter-spacing: 1px;
+}
+
+.recommendations-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+    padding-right: 3px;
+}
+
+.recommendation-row {
+    background-color: rgba(0, 0, 0, 0.15);
+    border: 1px solid var(--border-color);
+    border-left: 3px solid var(--border-color);
+    border-radius: 4px;
+    padding: 8px 12px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.recommendation-row.positive {
+    border-left-color: var(--blue-accent);
+}
+
+.recommendation-row.negative {
+    border-left-color: var(--red-accent);
+}
+
+.rec-winrate {
+    font-weight: 800;
+}
+
+.rec-delta {
+    font-weight: 800;
+    font-size: 0.8rem;
+    margin-left: 8px;
+}
+
+.rec-delta.plus { color: #5cb85c; }
+.rec-delta.minus { color: var(--red-accent); }
+
+/* Flat Champion Pool Box */
+.pool-container {
+    background-color: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 15px;
+}
+
+.pool-tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.tab-btn {
+    flex-grow: 1;
+    background-color: rgba(0,0,0,0.15);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    padding: 8px 0;
+    border-radius: 5px;
+    font-family: inherit;
+    font-weight: 700;
+    font-size: 0.75rem;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.tab-btn.active {
+    background-color: var(--gold);
+    color: #12141c;
+    border-color: var(--gold);
+}
+
+.pool-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.pool-header h3 {
+    font-size: 0.85rem;
+    font-weight: 800;
+    letter-spacing: 1px;
+    color: var(--gold);
+}
+
+#pool-search,
+#onboard-search {
+    background-color: rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 8px 12px;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 0.8rem;
+    outline: none;
+    width: 180px;
+    transition: border-color 0.15s ease;
+}
+
+#pool-search:focus,
+#onboard-search:focus {
+    border-color: var(--gold);
+}
+
+.champion-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+    gap: 6px;
+    max-height: 250px;
+    overflow-y: auto;
+    padding-right: 3px;
+}
+
+/* Champion Pill/Badge */
+.champ-badge {
+    background-color: rgba(0, 0, 0, 0.15);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 6px 4px;
+    font-size: 0.75rem;
+    color: var(--text-primary);
+    cursor: grab;
+    user-select: none;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    overflow: hidden;
+    display: block;
+}
+
+.champ-badge:hover {
+    border-color: var(--gold);
+    color: var(--gold);
+}
+
+/* Personal pool selected visual highlighting */
+.champ-badge.pool-selected {
+    border-color: var(--gold);
+    background-color: rgba(212, 172, 86, 0.15);
+    color: var(--gold-hover);
+}
+
+.champ-badge.picked {
+    display: none !important;
+}
+
+.champion-grid::-webkit-scrollbar,
+.recommendations-list::-webkit-scrollbar {
+    width: 4px;
+}
+.champion-grid::-webkit-scrollbar-track,
+.recommendations-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+.champion-grid::-webkit-scrollbar-thumb,
+.recommendations-list::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 2px;
+}
+.champion-grid::-webkit-scrollbar-thumb:hover,
+.recommendations-list::-webkit-scrollbar-thumb:hover {
+    background: var(--gold);
+}
+
+/* Onboarding Start Screen Overlay */
+.onboarding-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(18, 20, 28, 0.96);
+    z-index: 9999;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    animation: overlayFadeIn 0.3s ease-out forwards;
+}
+
+.onboarding-card {
+    background-color: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 35px;
+    width: 90%;
+    max-width: 720px;
+    box-shadow: 0 15px 40px rgba(0, 0, 0, 0.5);
+    text-align: left;
+}
+
+.onboarding-card h2 {
+    font-size: 1.6rem;
+    font-weight: 800;
+    letter-spacing: 1.5px;
+    color: var(--text-primary);
+    margin-bottom: 10px;
+    text-align: center;
+}
+
+.onboarding-subtitle {
+    font-size: 0.85rem;
+    line-height: 1.45;
+    color: var(--text-secondary);
+    margin-bottom: 20px;
+    text-align: center;
+}
+
+.onboarding-pool-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 15px;
+    margin-bottom: 12px;
+}
+
+.onboarding-grid {
+    max-height: 260px !important;
+}
+
+.onboarding-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 15px;
+    border-top: 1px solid var(--border-color);
+    padding-top: 20px;
+}
+
+@keyframes overlayFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}

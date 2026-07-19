@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>League of Legends Draft Predictor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>LEAGUE OF LEGENDS</h1>
+            <p class="subtitle">DRAFT WIN PREDICTOR</p>
+            <div class="gold-divider"></div>
+        </header>
+
+        <main class="dashboard">
+            <!-- Left Side: Blue Team (Side 1) -->
+            <section class="team-panel blue-team">
+                <h2 class="team-title">BLUE TEAM (Side 1)</h2>
+                <div class="role-slots">
+                    <div class="role-card" data-team="blue" data-role="top">
+                        <span class="target-btn" title="This is my role">Me</span>
+                        <span class="role-label">TOP</span>
+                        <span class="champ-name">Empty</span>
+                        <span class="clear-btn">&times;</span>
+                    </div>
+                    <div class="role-card" data-team="blue" data-role="jungle">
+                        <span class="target-btn" title="This is my role">Me</span>
+                        <span class="role-label">JUNGLE</span>
+                        <span class="champ-name">Empty</span>
+                        <span class="clear-btn">&times;</span>
+                    </div>
+                    <div class="role-card" data-team="blue" data-role="mid">
+                        <span class="target-btn" title="This is my role">Me</span>
+                        <span class="role-label">MIDDLE</span>
+                        <span class="champ-name">Empty</span>
+                        <span class="clear-btn">&times;</span>
+                    </div>
+                    <div class="role-card" data-team="blue" data-role="bot">
+                        <span class="target-btn" title="This is my role">Me</span>
+                        <span class="role-label">BOTTOM</span>
+                        <span class="champ-name">Empty</span>
+                        <span class="clear-btn">&times;</span>
+                    </div>
+                    <div class="role-card" data-team="blue" data-role="support">
+                        <span class="target-btn" title="This is my role">Me</span>
+                        <span class="role-label">SUPPORT</span>
+                        <span class="champ-name">Empty</span>
+                        <span class="clear-btn">&times;</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Center Console: Champion Pool & Prediction Results -->
+            <section class="center-panel">
+                <!-- Action Controls -->
+                <div class="action-bar">
+                    <button id="clear-btn" class="glow-on-hover">RESET ALL</button>
+                </div>
+
+                <!-- Live Predictions -->
+                <div class="prediction-output" id="output-card">
+                    <h3 class="output-title">WIN PROBABILITY</h3>
+                    <div class="bars-container">
+                        <div class="prob-labels">
+                            <span id="blue-percent">50.0%</span>
+                            <span id="red-percent">50.0%</span>
+                        </div>
+                        <div class="probability-track">
+                            <div class="probability-bar-blue" id="blue-bar" style="width: 50%;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Recommendations List box -->
+                    <div class="recommendations-box hidden" id="recommendations-box">
+                        <h4>MY POOL RECOMMENDATIONS</h4>
+                        <div class="recommendations-list" id="recommendations-list">
+                            <!-- Populated dynamically -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Champion Pool Selector -->
+                <div class="pool-container">
+                    <div class="pool-tabs">
+                        <button class="tab-btn active" id="tab-draft">PICK BOARD</button>
+                        <button class="tab-btn" id="tab-pool">MY POOL</button>
+                    </div>
+                    <div class="pool-header">
+                        <div>
+                            <h3 id="pool-title">CHAMPION LIST</h3>
+                            <span id="pool-subtitle" style="font-size: 0.65rem; color: var(--text-secondary); display: block; margin-top: 2px;">Drag to slots or click to assign</span>
+                        </div>
+                        <div class="pool-actions" style="display: flex; align-items: center;">
+                            <button id="select-all-btn" class="secondary-btn hidden" style="margin-right: 8px; padding: 6px 12px; font-size: 0.75rem; white-space: nowrap;">SELECT ALL</button>
+                            <input type="text" id="pool-search" placeholder="Type to filter champions..." autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="champion-grid" id="champion-grid">
+                        <!-- Champions loaded dynamically -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- Right Side: Red Team (Side 2) -->
+            <section class="team-panel red-team">
+                <h2 class="team-title">RED TEAM (Side 2)</h2>
+                <div class="role-slots">
+                    <div class="role-card" data-team="red" data-role="top">
+                        <span class="target-btn" title="This is my role">Me</span>
+                        <span class="role-label">TOP</span>
+                        <span class="champ-name">Empty</span>
+                        <span class="clear-btn">&times;</span>
+                    </div>
+                    <div class="role-card" data-team="red" data-role="jungle">
+                        <span class="target-btn" title="This is my role">Me</span>
+                        <span class="role-label">JUNGLE</span>
+                        <span class="champ-name">Empty</span>
+                        <span class="clear-btn">&times;</span>
+                    </div>
+                    <div class="role-card" data-team="red" data-role="mid">
+                        <span class="target-btn" title="This is my role">Me</span>
+                        <span class="role-label">MIDDLE</span>
+                        <span class="champ-name">Empty</span>
+                        <span class="clear-btn">&times;</span>
+                    </div>
+                    <div class="role-card" data-team="red" data-role="bot">
+                        <span class="target-btn" title="This is my role">Me</span>
+                        <span class="role-label">BOTTOM</span>
+                        <span class="champ-name">Empty</span>
+                        <span class="clear-btn">&times;</span>
+                    </div>
+                    <div class="role-card" data-team="red" data-role="support">
+                        <span class="target-btn" title="This is my role">Me</span>
+                        <span class="role-label">SUPPORT</span>
+                        <span class="champ-name">Empty</span>
+                        <span class="clear-btn">&times;</span>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Onboarding Welcome Start Screen Overlay -->
+    <div id="onboarding-overlay" class="onboarding-overlay hidden">
+        <div class="onboarding-card">
+            <h2>WELCOME TO THE DRAFT PREDICTOR</h2>
+            <p class="onboarding-subtitle">Select the champions in your pool to receive personalized draft recommendations. You can skip this and customize it anytime under the "MY POOL" tab.</p>
+            
+            <div class="onboarding-pool-header">
+                <button id="onboard-select-all" class="secondary-btn" style="padding: 6px 12px; font-size: 0.75rem; white-space: nowrap;">SELECT ALL</button>
+                <input type="text" id="onboard-search" placeholder="Type to filter champions..." autocomplete="off" style="flex-grow: 1; max-width: 250px;">
+            </div>
+
+            <div class="champion-grid onboarding-grid" id="onboard-grid" style="margin-top: 15px; margin-bottom: 20px;">
+                <!-- Loaded dynamically -->
+            </div>
+
+            <div class="onboarding-actions">
+                <button id="onboard-skip-btn" class="secondary-btn" style="height: 38px; padding: 0 25px;">SKIP</button>
+                <button id="onboard-start-btn" class="glow-on-hover" style="width: 140px; height: 38px; font-size: 0.85rem;">LET'S GO!</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="static/script.js"></script>
+</body>
+</html>

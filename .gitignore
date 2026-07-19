@@ -4,6 +4,3 @@ __pycache__/
 *.pyc
 .venv/
 env/
-app.py
-templates/
-static/

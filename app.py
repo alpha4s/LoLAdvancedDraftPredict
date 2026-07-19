@@ -132,9 +132,25 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        self.send_response(404)
+        routes = {
+            '/':              ('text/html',              'index.html'),
+            '/index.html':    ('text/html',              'index.html'),
+            '/static/style.css':  ('text/css',          'static/style.css'),
+            '/static/script.js':  ('application/javascript', 'static/script.js'),
+            '/champions.json':    ('application/json',   'champions.json'),
+        }
+        if self.path not in routes:
+            self.send_response(404)
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            return
+        content_type, rel_path = routes[self.path]
+        self.send_response(200)
+        self.send_header('Content-Type', content_type)
         self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
+        with open(os.path.join(SCRIPT_DIR, rel_path), 'rb') as f:
+            self.wfile.write(f.read())
 
     def do_POST(self):
         if not model:

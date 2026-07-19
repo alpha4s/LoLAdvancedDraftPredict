@@ -16,7 +16,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const poolSearch = document.getElementById('pool-search');
     const clearBtn = document.getElementById('clear-btn');
     const roleCards = document.querySelectorAll('.role-card');
-    const poolTitle = document.getElementById('pool-title');
     const selectAllBtn = document.getElementById('select-all-btn');
     const tabDraft = document.getElementById('tab-draft');
     const tabPool = document.getElementById('tab-pool');

@@ -1,7 +1,7 @@
 const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 const BACKEND_URL = isLocal ? '' : 'https://loladvanceddraftpredict.onrender.com';
 
-fetch(`${BACKEND_URL}/champions.json`).catch(() => {});
+fetch(`${BACKEND_URL}/api/predict`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).catch(() => {});
 
 document.addEventListener('DOMContentLoaded', () => {
     let championNames = [];
@@ -30,7 +30,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const onboardSkipBtn = document.getElementById('onboard-skip-btn');
     const onboardStartBtn = document.getElementById('onboard-start-btn');
 
-    fetch(`${BACKEND_URL}/champions.json`)
+    fetch('champions.json')
         .then(res => res.json())
         .then(data => {
             championNames = Object.values(data).sort();

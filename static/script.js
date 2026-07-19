@@ -1,7 +1,9 @@
-document.addEventListener('DOMContentLoaded', () => {
-    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    const BACKEND_URL = isLocal ? '' : 'https://YOUR-RENDER-APP-NAME.onrender.com';
+const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+const BACKEND_URL = isLocal ? '' : 'https://loladvanceddraftpredict.onrender.com';
 
+fetch(`${BACKEND_URL}/champions.json`).catch(() => {});
+
+document.addEventListener('DOMContentLoaded', () => {
     let championNames = [];
     let activeSlot = null;
     let userTargetCard = null;

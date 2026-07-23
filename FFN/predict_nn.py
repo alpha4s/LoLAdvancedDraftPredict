@@ -131,17 +131,17 @@ def predict_match(blue_team, red_team):
 if __name__ == "__main__":
     # Sample Test Case
     blue = {
-        'top': 'zed',
-        'jungle': 'naafiri',
-        'mid': 'locke',
-        'bot': 'leblanc',
-        'support': 'pyke'
+        'top': 'sona',
+        'jungle': 'gwen',
+        'mid': 'soraka',
+        'bot': 'senna',
+        'support': 'taric'
     }
     red = {
         'top': 'yuumi',
-        'jungle': 'mordekaiser',
+        'jungle': 'zed',
         'mid': 'darius',
-        'bot': 'jax',
+        'bot': 'locke',
         'support': 'malphite'
     }
     predict_match(blue, red)

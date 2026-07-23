@@ -73,8 +73,12 @@ def predict_match(blue_team, red_team):
     num_champs = len(champion_names)
     padding_idx = num_champs
     
+    adj_matrix = meta.get('adj_matrix', None)
+    if adj_matrix is not None:
+        adj_matrix = torch.tensor(adj_matrix, dtype=torch.float32)
+    
     # Initialize the PyTorch model
-    model = WideAndDeepDraftNN(num_champs, embedding_dim, num_heads)
+    model = WideAndDeepDraftNN(num_champs, embedding_dim, num_heads, adj_matrix=adj_matrix)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.to(device)
@@ -127,17 +131,17 @@ def predict_match(blue_team, red_team):
 if __name__ == "__main__":
     # Sample Test Case
     blue = {
-        'top': 'sona',
-        'jungle': 'syndra',
-        'mid': 'udyr',
-        'bot': 'vi',
-        'support': 'viego'
+        'top': 'zed',
+        'jungle': 'naafiri',
+        'mid': 'locke',
+        'bot': 'leblanc',
+        'support': 'pyke'
     }
     red = {
-        'top': 'vayne',
-        'jungle': 'voli',
-        'mid': 'zilean',
-        'bot': 'zoe',
-        'support': 'zac'
+        'top': 'yuumi',
+        'jungle': 'mordekaiser',
+        'mid': 'darius',
+        'bot': 'jax',
+        'support': 'malphite'
     }
     predict_match(blue, red)

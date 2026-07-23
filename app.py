@@ -23,13 +23,16 @@ if os.path.exists(model_path) and os.path.exists(meta_path):
     embedding_dim = meta.get('embedding_dim', 16)
     num_heads = meta.get('num_heads', 1)
     num_champs = len(champion_names)
+    adj_matrix = meta.get('adj_matrix', None)
+    if adj_matrix is not None:
+        adj_matrix = torch.tensor(adj_matrix, dtype=torch.float32)
     
-    model = WideAndDeepDraftNN(num_champs, embedding_dim, num_heads)
+    model = WideAndDeepDraftNN(num_champs, embedding_dim, num_heads, adj_matrix=adj_matrix)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.to(device)
     model.eval()
-    print("PyTorch model loaded successfully on startup.")
+    print("PyTorch GNN Wide & Deep model loaded successfully on startup.")
 else:
     print("Warning: FFN model/metadata not found. Run tune_nn.py first.")
     model = None

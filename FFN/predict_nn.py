@@ -8,16 +8,14 @@ from model import WideAndDeepDraftNN
 
 def get_champion_by_name(name, champ_to_idx):
     """
-    Search mapping dictionary for champion name, resolving common abbreviations and capitalization differences.
+    Search mapping dictionary for champion name, resolving common abbreviations, punctuation, and capitalization.
     """
     def normalize(s):
-        return "".join(c for c in s.lower() if c.isalnum())
+        return "".join(c for c in s.lower() if c.isalnum()) if s else ""
     
     aliases = {
         'wukong': 'monkeyking',
         'nunuandwillump': 'nunu',
-        'ksante': 'ksante',
-        'drmundo': 'drmundo',
         'renataglasc': 'renata',
         'tf': 'twistedfate',
         'mf': 'missfortune',
@@ -37,17 +35,23 @@ def get_champion_by_name(name, champ_to_idx):
     }
     
     norm_input = normalize(name)
+    if not norm_input:
+        return None
+
     if norm_input in aliases:
         norm_input = aliases[norm_input]
         
-    champ_to_idx_lower = {k.lower().replace(" ", "").replace("'", ""): v for k, v in champ_to_idx.items()}
+    champ_to_idx_norm = {normalize(k): v for k, v in champ_to_idx.items()}
     
-    if norm_input in champ_to_idx_lower:
-        return champ_to_idx_lower[norm_input]
+    # 1. Exact Match
+    if norm_input in champ_to_idx_norm:
+        return champ_to_idx_norm[norm_input]
         
-    for k, v in champ_to_idx_lower.items():
-        if norm_input in k:
-            return v
+    # 2. Substring Fallback (only for inputs >= 4 chars to prevent short string collisions like 'vi')
+    if len(norm_input) >= 4:
+        for k, v in champ_to_idx_norm.items():
+            if norm_input in k:
+                return v
             
     return None
 

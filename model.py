@@ -14,6 +14,7 @@ class WideAndDeepDraftNN(nn.Module):
         self.num_champs = num_champs
         self.embedding_dim = embedding_dim
         
+        # Wide Path: Signed difference encoding (+1 for Blue pick, -1 for Red pick) across 5 roles * num_champs
         self.wide_linear = nn.Linear(num_champs * 5, 1, bias=False)
         self.champ_embeddings = nn.Embedding(num_champs + 1, embedding_dim, padding_idx=num_champs)
         self.role_embeddings = nn.Embedding(5, embedding_dim)
@@ -23,7 +24,18 @@ class WideAndDeepDraftNN(nn.Module):
         if adj_matrix is not None:
             if not isinstance(adj_matrix, torch.Tensor):
                 adj_matrix = torch.tensor(adj_matrix, dtype=torch.float32)
-            # Normalize adjacency matrix D^(-1/2) A D^(-1/2)
+            
+            # Robust shape check: If adj_matrix is (num_champs, num_champs), pad a zero row/col for padding_idx (num_champs)
+            if adj_matrix.shape[0] == num_champs and adj_matrix.shape[1] == num_champs:
+                padded_adj = torch.zeros((num_champs + 1, num_champs + 1), dtype=adj_matrix.dtype, device=adj_matrix.device)
+                padded_adj[:num_champs, :num_champs] = adj_matrix
+                adj_matrix = padded_adj
+
+            # Explicit validation: Fail loud if shape does not match (num_champs + 1, num_champs + 1)
+            if adj_matrix.shape[0] != self.num_champs + 1 or adj_matrix.shape[1] != self.num_champs + 1:
+                raise ValueError(f"Invalid adj_matrix shape {tuple(adj_matrix.shape)}. Expected ({self.num_champs + 1}, {self.num_champs + 1}).")
+
+            # Row-normalized degree matrix D^(-1) A (Mean aggregation over champion graph neighbors)
             deg = adj_matrix.sum(dim=1, keepdim=True).clamp(min=1.0)
             norm_adj = adj_matrix / deg
             self.register_buffer('norm_adj', norm_adj)
@@ -60,6 +72,7 @@ class WideAndDeepDraftNN(nn.Module):
         all_embeds = self.get_champion_representations()
         champs = F.embedding(x_deep, all_embeds, padding_idx=self.num_champs)
         
+        # Role slots: [0..4] = Blue (Top, Jgl, Mid, Bot, Sup), [5..9] = Red (Top, Jgl, Mid, Bot, Sup)
         role_idx = torch.tensor([0, 1, 2, 3, 4, 0, 1, 2, 3, 4], dtype=torch.long, device=device)
         role_idx = role_idx.unsqueeze(0).expand(batch_size, -1)
         roles = self.role_embeddings(role_idx)

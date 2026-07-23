@@ -34,6 +34,25 @@ document.addEventListener('DOMContentLoaded', () => {
     const onboardSkipBtn = document.getElementById('onboard-skip-btn');
     const onboardStartBtn = document.getElementById('onboard-start-btn');
 
+    const techBtn = document.getElementById('tech-btn');
+    const backBtn = document.getElementById('back-btn');
+    const draftView = document.getElementById('draft-view');
+    const techView = document.getElementById('tech-view');
+
+    if (techBtn && backBtn && draftView && techView) {
+        techBtn.addEventListener('click', () => {
+            draftView.classList.add('hidden');
+            techView.classList.remove('hidden');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+        backBtn.addEventListener('click', () => {
+            techView.classList.add('hidden');
+            draftView.classList.remove('hidden');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+    }
+
+
     fetch('champions.json')
         .then(res => res.json())
         .then(data => {

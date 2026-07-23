@@ -74,7 +74,7 @@ header h1 {
     display: grid;
     grid-template-columns: 310px 1fr 310px;
     gap: 16px;
-    align-items: stretch;
+    align-items: start;
 }
 
 @media (max-width: 1000px) {
@@ -109,14 +109,12 @@ header h1 {
 .role-slots {
     display: flex;
     flex-direction: column;
-    gap: 14px;
-    flex-grow: 1;
+    gap: 10px;
 }
 
 /* Role Cards */
 .role-card {
-    flex: 1;
-    min-height: 72px;
+    height: 58px;
     background-color: var(--bg-mid);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
@@ -325,9 +323,11 @@ header h1 {
 
 /* Recommendations */
 .recommendations-box {
-    margin-top: 16px;
-    border-top: 1px solid var(--border-subtle);
-    padding-top: 14px;
+    background-color: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    box-shadow: var(--shadow-card);
     text-align: left;
 }
 
@@ -630,3 +630,89 @@ header h1 {
     margin-top: 8px;
     margin-bottom: 4px;
 }
+
+/* Technical Details View & Button */
+.tech-btn {
+    margin-top: 8px;
+    font-size: 0.7rem;
+    padding: 4px 12px;
+}
+
+.tech-card-full {
+    background-color: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    padding: 32px;
+    box-shadow: var(--shadow-card);
+    max-width: 900px;
+    margin: 0 auto 20px;
+}
+
+.tech-title {
+    font-size: 1.6rem;
+    font-weight: 800;
+    letter-spacing: 2px;
+    color: var(--gold);
+    margin-bottom: 6px;
+    text-align: left;
+}
+
+.tech-doc-subtitle {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-bottom: 24px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border-subtle);
+    text-align: left;
+}
+
+.tech-section {
+    margin-bottom: 24px;
+    text-align: left;
+}
+
+.tech-section h3 {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+    letter-spacing: 1px;
+}
+
+.tech-section p {
+    font-size: 0.86rem;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+}
+
+.tech-section ul {
+    list-style: disc;
+    padding-left: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.tech-section li {
+    font-size: 0.84rem;
+    line-height: 1.55;
+    color: var(--text-secondary);
+}
+
+.tech-section li strong {
+    color: var(--text-primary);
+}
+
+.badge-tag {
+    display: inline-block;
+    background: var(--bg-mid);
+    border: 1px solid var(--border-color);
+    color: var(--gold);
+    font-size: 0.68rem;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 4px;
+    margin-right: 6px;
+}
+

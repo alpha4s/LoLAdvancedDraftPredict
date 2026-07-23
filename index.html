@@ -14,9 +14,10 @@
         <header>
             <h1>LEAGUE OF LEGENDS</h1>
             <p class="subtitle">DRAFT WIN PREDICTOR</p>
+            <button id="tech-btn" class="secondary-btn tech-btn">TECHNICAL DETAILS</button>
         </header>
 
-        <div class="draft-layout">
+        <div class="draft-layout" id="draft-view">
             <!-- Left: Blue Team -->
             <section class="team-panel blue-team">
                 <h2 class="team-title">BLUE SIDE</h2>
@@ -60,12 +61,18 @@
                 <div class="prediction-strip">
                     <div class="prob-labels">
                         <span id="blue-percent">50.0%</span>
-                        <span class="prob-center-label">WIN PROBABILITY<br><span class="prob-req">2+ picks per side for calculation</span></span>
+                        <span class="prob-center-label">WIN PROBABILITY<br><span class="prob-req">Accuracy increases as champions are locked in</span></span>
                         <span id="red-percent">50.0%</span>
                     </div>
                     <div class="probability-track">
                         <div class="probability-bar-blue" id="blue-bar" style="width: 50%;"></div>
                     </div>
+                </div>
+
+                <!-- Recommendations -->
+                <div class="recommendations-box hidden" id="recommendations-box">
+                    <h4>MY POOL RECOMMENDATIONS</h4>
+                    <div class="recommendations-list" id="recommendations-list"></div>
                 </div>
 
                 <!-- Pool -->
@@ -85,11 +92,6 @@
                     <div class="champion-grid" id="champion-grid"></div>
                 </div>
 
-                <!-- Recommendations -->
-                <div class="recommendations-box hidden" id="recommendations-box">
-                    <h4>MY POOL RECOMMENDATIONS</h4>
-                    <div class="recommendations-list" id="recommendations-list"></div>
-                </div>
             </section>
 
             <!-- Right: Red Team -->
@@ -130,8 +132,48 @@
             </section>
         </div>
 
+        <!-- Technical Specifications View (Single Page View) -->
+        <section id="tech-view" class="tech-card-full hidden">
+            <div class="tech-nav" style="margin-bottom: 20px;">
+                <button id="back-btn" class="secondary-btn">← Back to Draft Board</button>
+            </div>
+            
+            <h2 class="tech-title">TECHNICAL SPECIFICATIONS</h2>
+            <p class="tech-doc-subtitle">Data Mining, Model Architecture, and Evaluation Mechanics | <span style="color: var(--gold); font-weight: 700;">Current Patch: 26.14</span></p>
+
+            <div class="tech-section">
+                <h3>1. Data Mining Pipeline</h3>
+                <p>Match data is mined using a custom Breadth-First Search (BFS) crawler connected to Riot Games' official API via <code>riotwatcher</code>. The crawler traverses match histories across Platinum+ Ranked Solo Queue games to build a dataset of over <strong>70,000+ completed match drafts (Patch 26.14)</strong>.</p>
+                <p>Champions are vectorized into position-aware role tokens (Top, Jungle, Mid, Bot, Support) for both Blue and Red teams. Because champions are mapped dynamically by name strings rather than hardcoded static stats, retraining updates win rates and counter relationships automatically per patch cycle.</p>
+            </div>
+
+            <div class="tech-section">
+                <h3>2. Deep Learning Architecture & Division of Labor</h3>
+                <p>The prediction engine uses a multi-stage hybrid design where each architectural component targets a specific aspect of League drafting:</p>
+                <ul>
+                    <li><strong><span class="badge-tag">WIDE</span> Google Wide Path (Base Win Rate Memorization)</strong>: A linear model path that directly tracks raw, role-specific base champion win rates across ranked solo queue.</li>
+                    <li><strong><span class="badge-tag">GCN</span> Graph Convolutional Layer (Relational Topology Prior)</strong>: Computes pairwise synergy and counter-pick adjacency matrices across all 170+ champions. Through graph message passing, it injects topological priors to stabilize predictions for low-sample-size and niche champions.</li>
+                    <li><strong><span class="badge-tag">ATTENTION</span> Multi-Head Self-Attention (5v5 Composition Interplay)</strong>: A Transformer attention block that processes full 10-champion sequences to compute complex 5v5 composition interplay, damage distribution, and team-wide synergy.</li>
+                </ul>
+            </div>
+
+            <div class="tech-section">
+                <h3>3. Snake-Draft Masked Partial State Training</h3>
+                <p>To support accurate win probability predictions during active champion select (from 1 pick up to 10 picks), training data is augmented across all official Ranked Solo Queue draft stages:</p>
+                <p style="font-family: monospace; color: var(--gold-hover); background: var(--bg-mid); padding: 8px 14px; border-radius: 4px; border: 1px solid var(--border-color);">
+                    Draft Order: B1 → R1, R2 → B2, B3 → R3, R4 → B4, B5 → R5
+                </p>
+                <p>Unpicked champion slots are masked using key-padding masks and masked mean-pooling, allowing the neural network to calculate clean, non-distorted expected win rates at any turn of champion select.</p>
+            </div>
+
+            <div class="tech-section">
+                <h3>4. Training & Optimization</h3>
+                <p>The network is optimized using Binary Cross Entropy Loss with the Adam optimizer. Regularization is enforced via L2 weight decay ($\alpha$) and Early Stopping on validation loss to prevent overfitting.</p>
+            </div>
+        </section>
+
         <footer class="disclaimer">
-            <p>⚠ Off-meta picks (e.g. Ashe Jungle) are underrepresented in training data so you may see non-sensical predictions in such cases. Predictions are highly inaccurate unless all 5 champions are selected on both sides. Not affiliated with or endorsed by Riot Games.</p>
+            <p>⚠ Off-meta picks (e.g. Ashe Jungle) are underrepresented in training data so you may see non-sensical predictions in such cases. Predictions become progressively more accurate as more champions are locked in. Not affiliated with or endorsed by Riot Games.</p>
         </footer>
     </div>
 
@@ -155,6 +197,8 @@
             </div>
         </div>
     </div>
+
+
 
     <script src="static/script.js"></script>
 </body>

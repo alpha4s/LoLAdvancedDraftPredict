@@ -129,6 +129,57 @@ document.addEventListener('DOMContentLoaded', () => {
 
     poolSearch.addEventListener('input', applyFilters);
 
+    const swapTeamsBtn = document.getElementById('swap-teams-btn');
+    if (swapTeamsBtn) {
+        swapTeamsBtn.addEventListener('click', () => {
+            const roles = ['top', 'jungle', 'mid', 'bot', 'support'];
+            roles.forEach(r => {
+                const bCard = document.querySelector(`.role-card[data-team="blue"][data-role="${r}"]`);
+                const rCard = document.querySelector(`.role-card[data-team="red"][data-role="${r}"]`);
+                if (!bCard || !rCard) return;
+
+                const bFilled = bCard.classList.contains('filled');
+                const rFilled = rCard.classList.contains('filled');
+
+                const bName = bFilled ? bCard.querySelector('.champ-name').textContent : 'Empty';
+                const rName = rFilled ? rCard.querySelector('.champ-name').textContent : 'Empty';
+
+                bCard.querySelector('.champ-name').textContent = rName;
+                bCard.classList.toggle('filled', rFilled);
+                if (rFilled) bCard.setAttribute('draggable', 'true'); else bCard.removeAttribute('draggable');
+
+                rCard.querySelector('.champ-name').textContent = bName;
+                rCard.classList.toggle('filled', bFilled);
+                if (bFilled) rCard.setAttribute('draggable', 'true'); else rCard.removeAttribute('draggable');
+            });
+
+            if (userTargetCard) {
+                const curTeam = userTargetCard.getAttribute('data-team');
+                const curRole = userTargetCard.getAttribute('data-role');
+                const oppTeam = curTeam === 'blue' ? 'red' : 'blue';
+                const newTarget = document.querySelector(`.role-card[data-team="${oppTeam}"][data-role="${curRole}"]`);
+                roleCards.forEach(c => c.classList.remove('user-target'));
+                userTargetCard = newTarget;
+                if (newTarget) newTarget.classList.add('user-target');
+            }
+
+            triggerLivePrediction();
+        });
+    }
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            if (poolSearch === document.activeElement) {
+                poolSearch.value = '';
+                applyFilters();
+                poolSearch.blur();
+            } else if (activeSlot) {
+                roleCards.forEach(c => c.classList.remove('active-selection'));
+                activeSlot = null;
+            }
+        }
+    });
+
     clearBtn.addEventListener('click', () => {
         roleCards.forEach(card => {
             if (card.classList.contains('filled')) {

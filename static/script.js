@@ -3,7 +3,6 @@ const BACKEND_URL = isLocal ? '' : 'https://loladvanceddraftpredict.onrender.com
 
 fetch(`${BACKEND_URL}/api/predict`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).catch(() => {});
 
-// Heartbeat ping every 10 minutes to keep Render awake while tab is open
 setInterval(() => {
     fetch(`${BACKEND_URL}/api/predict`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).catch(() => {});
 }, 10 * 60 * 1000);

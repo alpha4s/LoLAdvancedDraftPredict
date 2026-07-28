@@ -179,6 +179,8 @@ document.addEventListener('DOMContentLoaded', () => {
     selectAllBtn.addEventListener('click', () => toggleAllPool(personalPool.length < championNames.length));
     onboardSelectAll.addEventListener('click', () => toggleAllPool(personalPool.length < championNames.length));
 
+    let draggedSourceCard = null;
+
     roleCards.forEach(card => {
         card.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -201,16 +203,59 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
+        card.addEventListener('dragstart', (e) => {
+            if (!card.classList.contains('filled') || currentTab !== 'draft') {
+                return e.preventDefault();
+            }
+            const name = card.querySelector('.champ-name').textContent;
+            draggedSourceCard = card;
+            e.dataTransfer.setData('text/plain', name);
+            card.classList.add('dragging-card');
+        });
+
+        card.addEventListener('dragend', () => {
+            card.classList.remove('dragging-card');
+            roleCards.forEach(c => c.classList.remove('drag-over'));
+        });
+
         card.addEventListener('dragover', (e) => {
             e.preventDefault();
             if (currentTab === 'draft') card.classList.add('drag-over');
         });
+
         card.addEventListener('dragleave', () => card.classList.remove('drag-over'));
+
         card.addEventListener('drop', (e) => {
             e.preventDefault();
             card.classList.remove('drag-over');
             const name = e.dataTransfer.getData('text/plain');
-            if (name && currentTab === 'draft') assignChampion(card, name);
+            if (!name || currentTab !== 'draft') return;
+
+            if (draggedSourceCard && draggedSourceCard !== card) {
+                const targetFilled = card.classList.contains('filled');
+                const targetName = targetFilled ? card.querySelector('.champ-name').textContent : null;
+
+                // Move dragged champ to target slot
+                card.querySelector('.champ-name').textContent = name;
+                card.classList.add('filled');
+                card.setAttribute('draggable', 'true');
+
+                if (targetFilled && targetName) {
+                    // Swap target's champion to the source slot
+                    draggedSourceCard.querySelector('.champ-name').textContent = targetName;
+                    draggedSourceCard.classList.add('filled');
+                    draggedSourceCard.setAttribute('draggable', 'true');
+                } else {
+                    // Empty source slot
+                    draggedSourceCard.querySelector('.champ-name').textContent = 'Empty';
+                    draggedSourceCard.classList.remove('filled', 'active-selection');
+                    draggedSourceCard.removeAttribute('draggable');
+                }
+                draggedSourceCard = null;
+                triggerLivePrediction();
+            } else {
+                assignChampion(card, name);
+            }
         });
     });
 
@@ -225,6 +270,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         card.querySelector('.champ-name').textContent = name;
         card.classList.add('filled');
+        card.setAttribute('draggable', 'true');
         card.classList.remove('active-selection');
         togglePoolChampion(name, true);
         if (activeSlot === card) activeSlot = null;
@@ -236,6 +282,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const name = card.querySelector('.champ-name').textContent;
         card.querySelector('.champ-name').textContent = 'Empty';
         card.classList.remove('filled', 'active-selection');
+        card.removeAttribute('draggable');
         togglePoolChampion(name, false);
         if (activeSlot === card) activeSlot = null;
         triggerLivePrediction();

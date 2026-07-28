@@ -252,7 +252,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const blueCount = document.querySelectorAll('.role-card[data-team="blue"].filled').length;
         const redCount = document.querySelectorAll('.role-card[data-team="red"].filled').length;
 
-        if (blueCount < 2 || redCount < 2) {
+        if (blueCount === 0 && redCount === 0) {
             document.getElementById('blue-percent').textContent = '50.0%';
             document.getElementById('red-percent').textContent = '50.0%';
             document.getElementById('blue-bar').style.width = '50%';

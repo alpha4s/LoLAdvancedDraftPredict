@@ -129,6 +129,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
     poolSearch.addEventListener('input', applyFilters);
 
+    clearBtn.addEventListener('click', () => {
+        roleCards.forEach(card => {
+            if (card.classList.contains('filled')) {
+                const name = card.querySelector('.champ-name').textContent;
+                card.querySelector('.champ-name').textContent = 'Empty';
+                card.classList.remove('filled', 'active-selection');
+                togglePoolChampion(name, false);
+            }
+        });
+        activeSlot = null;
+        triggerLivePrediction();
+    });
+
     function updateSelectAllButtons() {
         const isFull = personalPool.length >= championNames.length;
         selectAllBtn.textContent = onboardSelectAll.textContent = isFull ? 'DESELECT ALL' : 'SELECT ALL';
@@ -236,7 +249,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    let currentPredictionSeq = 0;
+
     function triggerLivePrediction() {
+        currentPredictionSeq++;
+        const seq = currentPredictionSeq;
+
         const getVal = (team, role) => {
             const card = document.querySelector(`.role-card[data-team="${team}"][data-role="${role}"]`);
             return card.classList.contains('filled') ? card.querySelector('.champ-name').textContent : '';
@@ -251,7 +269,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const blueCount = document.querySelectorAll('.role-card[data-team="blue"].filled').length;
         const redCount = document.querySelectorAll('.role-card[data-team="red"].filled').length;
 
-        if (blueCount === 0 && redCount === 0) {
+        if (blueCount < 1 || redCount < 1) {
             document.getElementById('blue-percent').textContent = '50.0%';
             document.getElementById('red-percent').textContent = '50.0%';
             document.getElementById('blue-bar').style.width = '50%';
@@ -266,7 +284,7 @@ document.addEventListener('DOMContentLoaded', () => {
         })
         .then(res => res.json())
         .then(data => {
-            if (data.error) return;
+            if (seq !== currentPredictionSeq || data.error) return;
             const prob = data.probability;
             document.getElementById('blue-percent').textContent = (prob * 100).toFixed(1) + '%';
             document.getElementById('red-percent').textContent = ((1 - prob) * 100).toFixed(1) + '%';

@@ -191,14 +191,15 @@ document.addEventListener('DOMContentLoaded', () => {
             redPct.textContent = ((1 - p) * 100).toFixed(1) + '%';
 
             if (targetCard && pool.length) {
-                fetchRecommendations(payload);
+                fetchRecommendations(payload, p);
             } else if (recBox) {
                 recBox.classList.add('hidden');
             }
         });
     }
 
-    function fetchRecommendations(payload) {
+    function fetchRecommendations(payload, baseline) {
+        const userBaseline = targetCard.dataset.team === 'blue' ? baseline : 1 - baseline;
         post('/api/recommend', {
             ...payload,
             user_side: targetCard.dataset.team,
@@ -209,10 +210,12 @@ document.addEventListener('DOMContentLoaded', () => {
             recList.innerHTML = '';
             recBox.classList.remove('hidden');
             data.recommendations.slice(0, 5).forEach(rec => {
+                const delta = (rec.win_rate - userBaseline) * 100;
+                const sign = delta >= 0 ? '+' : '';
                 const item = document.createElement('div');
                 item.className = 'rec-item';
-                item.innerHTML = `<span class="rec-name">${rec.champion}</span><span class="rec-diff">+${(rec.win_rate_increase * 100).toFixed(1)}%</span>`;
-                item.onclick = () => assign(targetCard, rec.champion);
+                item.innerHTML = `<span class="rec-name">${rec.name}</span> <span class="rec-diff">${(rec.win_rate * 100).toFixed(1)}% (${sign}${delta.toFixed(1)})</span>`;
+                item.onclick = () => assign(targetCard, rec.name);
                 recList.appendChild(item);
             });
         });

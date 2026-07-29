@@ -79,6 +79,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (search) search.oninput = filter;
 
     cards.forEach(c => {
+        c.draggable = true;
         c.onclick = (e) => {
             e.stopPropagation();
             if (e.target.closest('.target-btn')) {

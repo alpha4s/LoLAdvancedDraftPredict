@@ -26,8 +26,11 @@ if os.path.exists(model_path) and os.path.exists(meta_path):
     adj_matrix = meta.get('adj_matrix', None)
     if adj_matrix is not None:
         adj_matrix = torch.tensor(adj_matrix, dtype=torch.float32)
+    role_affinity = meta.get('role_affinity', None)
+    if role_affinity is not None:
+        role_affinity = torch.tensor(role_affinity, dtype=torch.float32)
     
-    model = WideAndDeepDraftNN(num_champs, embedding_dim, num_heads, adj_matrix=adj_matrix)
+    model = WideAndDeepDraftNN(num_champs, embedding_dim, num_heads, adj_matrix=adj_matrix, role_affinity=role_affinity)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.to(device)

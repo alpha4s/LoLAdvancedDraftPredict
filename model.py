@@ -9,7 +9,7 @@ class WideAndDeepDraftNN(nn.Module):
     - Self-Attention: Learns draft-wide composition interactions.
     - Masking Support: Handles partial drafts cleanly via key_padding_mask and masked mean pooling.
     """
-    def __init__(self, num_champs, embedding_dim=16, num_heads=2, adj_matrix=None):
+    def __init__(self, num_champs, embedding_dim=16, num_heads=2, adj_matrix=None, role_affinity=None):
         super(WideAndDeepDraftNN, self).__init__()
         self.num_champs = num_champs
         self.embedding_dim = embedding_dim
@@ -42,12 +42,22 @@ class WideAndDeepDraftNN(nn.Module):
         else:
             self.register_buffer('norm_adj', None)
 
+        # Role affinity: (num_champs+1, 5) matrix of per-champion role play rates
+        if role_affinity is not None:
+            if not isinstance(role_affinity, torch.Tensor):
+                role_affinity = torch.tensor(role_affinity, dtype=torch.float32)
+            self.register_buffer('role_affinity', role_affinity)
+        else:
+            self.register_buffer('role_affinity', None)
+
+        fc_input = 2 * embedding_dim + (10 if role_affinity is not None else 0)
+
         self.ln1 = nn.LayerNorm(embedding_dim)
         self.attn = nn.MultiheadAttention(embed_dim=embedding_dim, num_heads=num_heads, batch_first=True, dropout=0.2)
-        self.ln2 = nn.LayerNorm(2 * embedding_dim)
+        self.ln2 = nn.LayerNorm(fc_input)
         
         self.fc = nn.Sequential(
-            nn.Linear(2 * embedding_dim, 32),
+            nn.Linear(fc_input, 32),
             nn.ReLU(),
             nn.Dropout(p=0.3),
             nn.Linear(32, 1)
@@ -101,6 +111,13 @@ class WideAndDeepDraftNN(nn.Module):
         red_rep = red_sum / red_cnt
         
         combined = torch.cat([blue_rep, red_rep], dim=1)
+
+        # Role affinity gating: look up each slot's play-rate for its assigned role
+        if self.role_affinity is not None:
+            role_idx_flat = torch.tensor([0, 1, 2, 3, 4, 0, 1, 2, 3, 4], dtype=torch.long, device=device)
+            affinities = self.role_affinity[x_deep, role_idx_flat.unsqueeze(0).expand(batch_size, -1)]
+            combined = torch.cat([combined, affinities], dim=1)
+
         combined = self.ln2(combined)
         
         deep_out = self.fc(combined)

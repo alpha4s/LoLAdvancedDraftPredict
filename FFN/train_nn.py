@@ -60,34 +60,56 @@ def build_adj_matrix(df_train, name_to_idx):
     np.fill_diagonal(adj, 1.0)
     return adj
 
+def build_role_affinity(df_train, name_to_idx):
+    """
+    Builds (num_champs+1, 5) matrix of per-champion role play rates from training data.
+    Each row sums to 1.0 (or 0.0 for unseen champions). Padding row is all zeros.
+    """
+    num_champs = len(name_to_idx)
+    counts = np.zeros((num_champs + 1, 5), dtype=np.float32)
+    roles = ['top', 'jungle', 'mid', 'bot', 'support']
+
+    for side in ['blue', 'red']:
+        for r_idx, role in enumerate(roles):
+            col = f'{side}_{role}'
+            for name in df_train[col]:
+                idx = name_to_idx.get(name)
+                if idx is not None:
+                    counts[idx, r_idx] += 1
+
+    totals = counts.sum(axis=1, keepdims=True)
+    totals[totals == 0] = 1.0
+    return counts / totals
+
 def vectorize_data(df, name_to_idx, augment_snake_draft=True):
     """
-    Vectorizes matches into X_wide, X_deep, and y tensors.
+    Vectorizes matches into X_wide, X_deep, y, and sample_weights tensors.
     Augments dataset with Snake-Draft partial states so the model accurately evaluates mid-draft turns.
+    Stage weights prioritize fuller drafts where composition signal is strongest.
     """
     num_champs = len(name_to_idx)
     roles = ['top', 'jungle', 'mid', 'bot', 'support']
     
     # Official Snake Draft Pick Stages: (Blue Picks, Red Picks)
-    # Turn 1: B1 | Turn 2: B1, R1, R2 | Turn 3: B1-B3, R1-R2 | Turn 4: B1-B3, R1-R4 | Turn 5: B1-B5, R1-R4 | Turn 6: Full 5v5
     snake_stages = [
         ([0], []),
         ([0], [0, 1]),
         ([0, 1, 2], [0, 1]),
         ([0, 1, 2], [0, 1, 2, 3]),
         ([0, 1, 2, 3, 4], [0, 1, 2, 3]),
-        ([0, 1, 2, 3, 4], [0, 1, 2, 3, 4]) # Full match
+        ([0, 1, 2, 3, 4], [0, 1, 2, 3, 4])
     ]
+    stage_weights = [0.05, 0.1, 0.2, 0.3, 0.5, 1.0]
 
-    X_wide_list, X_deep_list, y_list = [], [], []
+    X_wide_list, X_deep_list, y_list, w_list = [], [], [], []
 
     for _, row in df.iterrows():
         b_indices = [name_to_idx.get(row[f'blue_{r}'], num_champs) for r in roles]
         r_indices = [name_to_idx.get(row[f'red_{r}'], num_champs) for r in roles]
         win = 1.0 if row['winning_team'] == 'BLUE_WIN' else 0.0
 
-        stages_to_use = snake_stages if augment_snake_draft else [snake_stages[-1]]
-        for b_active_roles, r_active_roles in stages_to_use:
+        stages_to_use = list(enumerate(snake_stages)) if augment_snake_draft else [(5, snake_stages[-1])]
+        for s_idx, (b_active_roles, r_active_roles) in stages_to_use:
             x_d = np.full(10, num_champs, dtype=np.int64)
             x_w = np.zeros(num_champs * 5, dtype=np.float32)
 
@@ -106,20 +128,28 @@ def vectorize_data(df, name_to_idx, augment_snake_draft=True):
             X_deep_list.append(x_d)
             X_wide_list.append(x_w)
             y_list.append(win)
+            w_list.append(stage_weights[s_idx])
 
-    return np.array(X_wide_list, dtype=np.float32), np.array(X_deep_list, dtype=np.int64), np.array(y_list, dtype=np.float32)
+    return (
+        np.array(X_wide_list, dtype=np.float32),
+        np.array(X_deep_list, dtype=np.int64),
+        np.array(y_list, dtype=np.float32),
+        np.array(w_list, dtype=np.float32)
+    )
 
-def train_and_evaluate(X_wide_train, X_deep_train, y_train, X_wide_val, X_deep_val, y_val, num_champs, embedding_dim, num_heads, alpha, device, adj_matrix, epochs=100, patience=15):
+def train_and_evaluate(X_wide_train, X_deep_train, y_train, w_train, X_wide_val, X_deep_val, y_val, w_val, num_champs, embedding_dim, num_heads, alpha, device, adj_matrix, role_affinity, epochs=100, patience=15):
     train_dataset = TensorDataset(
         torch.tensor(X_wide_train, dtype=torch.float32),
         torch.tensor(X_deep_train, dtype=torch.long),
-        torch.tensor(y_train, dtype=torch.float32).unsqueeze(1)
+        torch.tensor(y_train, dtype=torch.float32).unsqueeze(1),
+        torch.tensor(w_train, dtype=torch.float32).unsqueeze(1)
     )
     train_loader = DataLoader(train_dataset, batch_size=256, shuffle=True)
     
     adj_tensor = torch.tensor(adj_matrix, dtype=torch.float32).to(device)
-    model = WideAndDeepDraftNN(num_champs, embedding_dim, num_heads, adj_matrix=adj_tensor).to(device)
-    criterion = nn.BCELoss()
+    ra_tensor = torch.tensor(role_affinity, dtype=torch.float32).to(device)
+    model = WideAndDeepDraftNN(num_champs, embedding_dim, num_heads, adj_matrix=adj_tensor, role_affinity=ra_tensor).to(device)
+    criterion = nn.BCELoss(reduction='none')
     optimizer = optim.Adam(model.parameters(), lr=0.0003, weight_decay=alpha)
 
     best_val_loss = float('inf')
@@ -129,11 +159,11 @@ def train_and_evaluate(X_wide_train, X_deep_train, y_train, X_wide_val, X_deep_v
     for epoch in range(1, epochs + 1):
         model.train()
         train_loss = 0.0
-        for w_in, d_in, targets in train_loader:
-            w_in, d_in, targets = w_in.to(device), d_in.to(device), targets.to(device)
+        for w_in, d_in, targets, weights in train_loader:
+            w_in, d_in, targets, weights = w_in.to(device), d_in.to(device), targets.to(device), weights.to(device)
             optimizer.zero_grad()
             outputs = model(w_in, d_in)
-            loss = criterion(outputs, targets)
+            loss = (criterion(outputs, targets) * weights).mean()
             loss.backward()
             optimizer.step()
             train_loss += loss.item() * len(targets)
@@ -142,10 +172,11 @@ def train_and_evaluate(X_wide_train, X_deep_train, y_train, X_wide_val, X_deep_v
 
         model.eval()
         with torch.no_grad():
-            w_val = torch.tensor(X_wide_val, dtype=torch.float32).to(device)
-            d_val = torch.tensor(X_deep_val, dtype=torch.long).to(device)
-            y_val_t = torch.tensor(y_val, dtype=torch.float32).unsqueeze(1).to(device)
-            val_loss = criterion(model(w_val, d_val), y_val_t).item()
+            wv = torch.tensor(X_wide_val, dtype=torch.float32).to(device)
+            dv = torch.tensor(X_deep_val, dtype=torch.long).to(device)
+            yv = torch.tensor(y_val, dtype=torch.float32).unsqueeze(1).to(device)
+            wv_weights = torch.tensor(w_val, dtype=torch.float32).unsqueeze(1).to(device)
+            val_loss = (criterion(model(wv, dv), yv) * wv_weights).mean().item()
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -168,9 +199,9 @@ def train_and_evaluate(X_wide_train, X_deep_train, y_train, X_wide_val, X_deep_v
     model.eval()
     stage_scores = {}
     with torch.no_grad():
-        w_val = torch.tensor(X_wide_val, dtype=torch.float32).to(device)
-        d_val = torch.tensor(X_deep_val, dtype=torch.long).to(device)
-        preds = (model(w_val, d_val).cpu().numpy() > 0.5).astype(int)
+        wv = torch.tensor(X_wide_val, dtype=torch.float32).to(device)
+        dv = torch.tensor(X_deep_val, dtype=torch.long).to(device)
+        preds = (model(wv, dv).cpu().numpy() > 0.5).astype(int)
         score = accuracy_score(y_val, preds)
 
         stage_names = [
@@ -189,7 +220,7 @@ def train_and_evaluate(X_wide_train, X_deep_train, y_train, X_wide_val, X_deep_v
 
     return model, score, stage_scores
 
-def save_files(model, champion_names, name_to_idx, score, stage_scores, embed_dim, num_heads, alpha, adj_matrix):
+def save_files(model, champion_names, name_to_idx, score, stage_scores, embed_dim, num_heads, alpha, adj_matrix, role_affinity):
     model_path = os.path.join(SCRIPT_DIR, 'model_nn.pth')
     torch.save(model.state_dict(), model_path)
     metadata = {
@@ -202,6 +233,7 @@ def save_files(model, champion_names, name_to_idx, score, stage_scores, embed_di
         'embedding_dim': embed_dim,
         'num_heads': num_heads,
         'adj_matrix': adj_matrix.tolist(),
+        'role_affinity': role_affinity.tolist(),
         'best_hyperparameters': {
             'embedding_dim': embed_dim,
             'num_heads': num_heads,
@@ -238,11 +270,15 @@ def main():
     # 2. Build GNN Adjacency Matrix using TRAINING matches ONLY!
     print("Building champion synergy & counter GNN adjacency matrix from training set only...")
     adj_matrix = build_adj_matrix(df_train, name_to_idx)
+
+    # 2b. Build Role Affinity Matrix from TRAINING matches ONLY!
+    print("Building champion role affinity matrix from training set only...")
+    role_affinity = build_role_affinity(df_train, name_to_idx)
     
     # 3. Vectorize df_train and df_val SEPARATELY
     print("Vectorizing draft datasets with Snake-Draft partial state augmentation...")
-    X_wide_train, X_deep_train, y_train = vectorize_data(df_train, name_to_idx, augment_snake_draft=True)
-    X_wide_val, X_deep_val, y_val = vectorize_data(df_val, name_to_idx, augment_snake_draft=True)
+    X_wide_train, X_deep_train, y_train, w_train = vectorize_data(df_train, name_to_idx, augment_snake_draft=True)
+    X_wide_val, X_deep_val, y_val, w_val = vectorize_data(df_val, name_to_idx, augment_snake_draft=True)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Device: {device} | Train Augmented Samples: {len(y_train)} | Val Augmented Samples: {len(y_val)}")
@@ -259,9 +295,9 @@ def main():
             for alpha in alphas:
                 print(f"\n--- Testing Config: EmbedDim={embed_dim}, Heads={num_heads}, Alpha={alpha} ---")
                 model, score, stage_scores = train_and_evaluate(
-                    X_wide_train, X_deep_train, y_train,
-                    X_wide_val, X_deep_val, y_val,
-                    num_champs, embed_dim, num_heads, alpha, device, adj_matrix, epochs=100, patience=15
+                    X_wide_train, X_deep_train, y_train, w_train,
+                    X_wide_val, X_deep_val, y_val, w_val,
+                    num_champs, embed_dim, num_heads, alpha, device, adj_matrix, role_affinity, epochs=100, patience=15
                 )
                 print(f" -> Overall Validation Accuracy: {score:.2%}")
                 if score > best_acc:
@@ -271,15 +307,15 @@ def main():
                     best_stages = stage_scores
 
         print(f"\nBest Config found: {best_config} | Held-Out Accuracy: {best_acc:.2%}")
-        save_files(best_model, champ_names, name_to_idx, best_acc, best_stages, best_config['embedding_dim'], best_config['num_heads'], best_config['alpha'], adj_matrix)
+        save_files(best_model, champ_names, name_to_idx, best_acc, best_stages, best_config['embedding_dim'], best_config['num_heads'], best_config['alpha'], adj_matrix, role_affinity)
     else:
         print(f"Training model with EmbedDim={args.embed_dim}, Alpha={args.alpha}...")
         model, score, stage_scores = train_and_evaluate(
-            X_wide_train, X_deep_train, y_train,
-            X_wide_val, X_deep_val, y_val,
-            num_champs, args.embed_dim, 1, args.alpha, device, adj_matrix, epochs=100, patience=15
+            X_wide_train, X_deep_train, y_train, w_train,
+            X_wide_val, X_deep_val, y_val, w_val,
+            num_champs, args.embed_dim, 1, args.alpha, device, adj_matrix, role_affinity, epochs=100, patience=15
         )
-        save_files(model, champ_names, name_to_idx, score, stage_scores, args.embed_dim, 1, args.alpha, adj_matrix)
+        save_files(model, champ_names, name_to_idx, score, stage_scores, args.embed_dim, 1, args.alpha, adj_matrix, role_affinity)
 
 if __name__ == "__main__":
     main()

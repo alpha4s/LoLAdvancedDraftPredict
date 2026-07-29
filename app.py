@@ -99,6 +99,7 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        clean_path = self.path.split('?')[0]
         routes = {
             '/':              ('text/html',              'index.html'),
             '/index.html':    ('text/html',              'index.html'),
@@ -106,12 +107,12 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
             '/static/script.js':  ('application/javascript', 'static/script.js'),
             '/champions.json':    ('application/json',   'champions.json'),
         }
-        if self.path not in routes:
+        if clean_path not in routes:
             self.send_response(404)
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             return
-        content_type, rel_path = routes[self.path]
+        content_type, rel_path = routes[clean_path]
         self.send_response(200)
         self.send_header('Content-Type', content_type)
         self.send_header('Access-Control-Allow-Origin', '*')

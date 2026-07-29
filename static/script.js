@@ -1,461 +1,220 @@
-const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-const BACKEND_URL = isLocal ? '' : 'https://loladvanceddraftpredict.onrender.com';
+const API = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+    ? ''
+    : 'https://loladvanceddraftpredict.onrender.com';
 
-fetch(`${BACKEND_URL}/api/predict`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).catch(() => {});
+const post = (url, body) => fetch(API + url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+}).then(r => r.json()).catch(() => ({}));
 
-setInterval(() => {
-    fetch(`${BACKEND_URL}/api/predict`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).catch(() => {});
-}, 10 * 60 * 1000);
+const $ = id => document.getElementById(id);
 
 document.addEventListener('DOMContentLoaded', () => {
-    let championNames = [];
+    let champs = [];
     let activeSlot = null;
-    let userTargetCard = null;
-    let currentTab = 'draft';
-    let personalPool = [];
+    let targetCard = null;
+    let pool = [];
+    let dragCard = null;
 
-    try { personalPool = JSON.parse(localStorage.getItem('my_personal_champion_pool')) || []; } catch (e) {}
+    try {
+        pool = JSON.parse(localStorage.getItem('my_personal_champion_pool')) || [];
+    } catch (e) {}
 
-    const championGrid = document.getElementById('champion-grid');
-    const poolSearch = document.getElementById('pool-search');
-    const clearBtn = document.getElementById('clear-btn');
-    const roleCards = document.querySelectorAll('.role-card');
-    const selectAllBtn = document.getElementById('select-all-btn');
-    const tabDraft = document.getElementById('tab-draft');
-    const tabPool = document.getElementById('tab-pool');
-    const recommendationsBox = document.getElementById('recommendations-box');
-    const recommendationsList = document.getElementById('recommendations-list');
+    const grid = $('champion-grid');
+    const search = $('pool-search');
+    const clearBtn = $('clear-btn');
+    const swapBtn = $('swap-teams-btn');
+    const cards = document.querySelectorAll('.role-card');
+    const recBox = $('recommendations-box');
+    const recList = $('recommendations-list');
+    const bluePct = $('blue-percent');
+    const redPct = $('red-percent');
 
-    const onboardingOverlay = document.getElementById('onboarding-overlay');
-    const onboardGrid = document.getElementById('onboard-grid');
-    const onboardSearch = document.getElementById('onboard-search');
-    const onboardSelectAll = document.getElementById('onboard-select-all');
-    const onboardSkipBtn = document.getElementById('onboard-skip-btn');
-    const onboardStartBtn = document.getElementById('onboard-start-btn');
-
-    const techBtn = document.getElementById('tech-btn');
-    const backBtn = document.getElementById('back-btn');
-    const draftView = document.getElementById('draft-view');
-    const techView = document.getElementById('tech-view');
-
-    if (techBtn && backBtn && draftView && techView) {
-        techBtn.addEventListener('click', () => {
-            draftView.classList.add('hidden');
-            techView.classList.remove('hidden');
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        });
-        backBtn.addEventListener('click', () => {
-            techView.classList.add('hidden');
-            draftView.classList.remove('hidden');
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        });
-    }
-
-
-    fetch('champions.json')
-        .then(res => res.json())
-        .then(data => {
-            championNames = Object.values(data).sort();
-            if (!localStorage.getItem('draft_predictor_onboarded')) {
-                onboardingOverlay.classList.remove('hidden');
-                renderGrid(onboardGrid, true);
-                setupOnboardingListeners();
-            }
-            renderGrid(championGrid, false);
-            triggerLivePrediction();
-        })
-        .catch(err => console.error(err));
+    fetch('champions.json').then(r => r.json()).then(data => {
+        champs = data;
+        renderGrid();
+        predict();
+    });
 
     const savePool = () => {
-        try { localStorage.setItem('my_personal_champion_pool', JSON.stringify(personalPool)); } catch (e) {}
+        try {
+            localStorage.setItem('my_personal_champion_pool', JSON.stringify(pool));
+        } catch (e) {}
     };
 
-    function renderGrid(container, isPoolManager) {
-        container.innerHTML = '';
-        championNames.forEach(name => {
-            const badge = document.createElement('div');
-            badge.className = 'champ-badge';
-            badge.textContent = name;
-            badge.dataset.name = name;
+    function renderGrid() {
+        if (!grid) return;
+        grid.innerHTML = '';
+        champs.forEach(name => {
+            const b = document.createElement('div');
+            b.className = 'champ-badge' + (pool.includes(name) ? ' pool-selected' : '');
+            b.textContent = name;
+            b.draggable = true;
 
-            if (personalPool.includes(name)) badge.classList.add('pool-selected');
+            b.ondragstart = (e) => { dragCard = null; e.dataTransfer.setData('text/plain', name); };
+            b.onclick = () => assign(activeSlot || Array.from(cards).find(c => !c.classList.contains('filled')), name);
+            b.oncontextmenu = (e) => {
+                e.preventDefault();
+                pool = pool.includes(name) ? pool.filter(p => p !== name) : [...pool, name];
+                b.classList.toggle('pool-selected', pool.includes(name));
+                savePool();
+                predict();
+            };
 
-            badge.addEventListener('click', () => {
-                if (isPoolManager || currentTab === 'pool') {
-                    const idx = personalPool.indexOf(name);
-                    if (idx > -1) {
-                        personalPool.splice(idx, 1);
-                        badge.classList.remove('pool-selected');
-                    } else {
-                        personalPool.push(name);
-                        badge.classList.add('pool-selected');
-                    }
-                    savePool();
-                    updateSelectAllButtons();
-                    triggerLivePrediction();
-                } else {
-                    const targetCard = activeSlot || Array.from(roleCards).find(c => !c.classList.contains('filled'));
-                    assignChampion(targetCard, name);
-                }
-            });
-
-            if (!isPoolManager) {
-                badge.setAttribute('draggable', 'true');
-                badge.addEventListener('dragstart', (e) => {
-                    if (currentTab === 'pool') return e.preventDefault();
-                    e.dataTransfer.setData('text/plain', name);
-                    roleCards.forEach(c => { if (!c.classList.contains('filled')) c.classList.add('drag-possible'); });
-                });
-                badge.addEventListener('dragend', () => roleCards.forEach(c => c.classList.remove('drag-possible')));
-            }
-            container.appendChild(badge);
+            grid.appendChild(b);
         });
-        applyFilters();
+        filter();
     }
 
-    function filterGrid(input, grid, hidePicked) {
-        const val = input.value.trim().toLowerCase();
-        grid.querySelectorAll('.champ-badge').forEach(badge => {
-            const match = badge.textContent.toLowerCase().includes(val);
-            const picked = hidePicked && badge.classList.contains('picked');
-            badge.style.display = (match && !picked) ? 'block' : 'none';
+    function filter() {
+        if (!grid) return;
+        const q = search ? search.value.trim().toLowerCase() : '';
+        Array.from(grid.children).forEach(b => {
+            const isMatch = b.textContent.toLowerCase().includes(q);
+            b.style.display = (isMatch && !b.classList.contains('picked')) ? 'block' : 'none';
         });
     }
 
-    const applyFilters = () => {
-        filterGrid(poolSearch, championGrid, currentTab === 'draft');
-        if (onboardGrid.children.length > 0) filterGrid(onboardSearch, onboardGrid, false);
-    };
+    if (search) search.oninput = filter;
 
-    poolSearch.addEventListener('input', applyFilters);
-
-    const swapTeamsBtn = document.getElementById('swap-teams-btn');
-    if (swapTeamsBtn) {
-        swapTeamsBtn.addEventListener('click', () => {
-            const roles = ['top', 'jungle', 'mid', 'bot', 'support'];
-            roles.forEach(r => {
-                const bCard = document.querySelector(`.role-card[data-team="blue"][data-role="${r}"]`);
-                const rCard = document.querySelector(`.role-card[data-team="red"][data-role="${r}"]`);
-                if (!bCard || !rCard) return;
-
-                const bFilled = bCard.classList.contains('filled');
-                const rFilled = rCard.classList.contains('filled');
-
-                const bName = bFilled ? bCard.querySelector('.champ-name').textContent : 'Empty';
-                const rName = rFilled ? rCard.querySelector('.champ-name').textContent : 'Empty';
-
-                bCard.querySelector('.champ-name').textContent = rName;
-                bCard.classList.toggle('filled', rFilled);
-                if (rFilled) bCard.setAttribute('draggable', 'true'); else bCard.removeAttribute('draggable');
-
-                rCard.querySelector('.champ-name').textContent = bName;
-                rCard.classList.toggle('filled', bFilled);
-                if (bFilled) rCard.setAttribute('draggable', 'true'); else rCard.removeAttribute('draggable');
-            });
-
-            if (userTargetCard) {
-                const curTeam = userTargetCard.getAttribute('data-team');
-                const curRole = userTargetCard.getAttribute('data-role');
-                const oppTeam = curTeam === 'blue' ? 'red' : 'blue';
-                const newTarget = document.querySelector(`.role-card[data-team="${oppTeam}"][data-role="${curRole}"]`);
-                roleCards.forEach(c => c.classList.remove('user-target'));
-                userTargetCard = newTarget;
-                if (newTarget) newTarget.classList.add('user-target');
-            }
-
-            triggerLivePrediction();
-        });
-    }
-
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') {
-            if (poolSearch === document.activeElement) {
-                poolSearch.value = '';
-                applyFilters();
-                poolSearch.blur();
-            } else if (activeSlot) {
-                roleCards.forEach(c => c.classList.remove('active-selection'));
-                activeSlot = null;
-            }
-        }
-    });
-
-    clearBtn.addEventListener('click', () => {
-        roleCards.forEach(card => {
-            if (card.classList.contains('filled')) {
-                const name = card.querySelector('.champ-name').textContent;
-                card.querySelector('.champ-name').textContent = 'Empty';
-                card.classList.remove('filled', 'active-selection');
-                togglePoolChampion(name, false);
-            }
-        });
-        activeSlot = null;
-        triggerLivePrediction();
-    });
-
-    function updateSelectAllButtons() {
-        const isFull = personalPool.length >= championNames.length;
-        selectAllBtn.textContent = onboardSelectAll.textContent = isFull ? 'DESELECT ALL' : 'SELECT ALL';
-    }
-
-    tabDraft.addEventListener('click', () => {
-        currentTab = 'draft';
-        tabDraft.classList.add('active');
-        tabPool.classList.remove('active');
-        poolTitle.textContent = 'CHAMPION LIST';
-        selectAllBtn.classList.add('hidden');
-        applyFilters();
-    });
-
-    tabPool.addEventListener('click', () => {
-        currentTab = 'pool';
-        tabPool.classList.add('active');
-        tabDraft.classList.remove('active');
-        poolTitle.textContent = 'MANAGE MY POOL';
-        selectAllBtn.classList.remove('hidden');
-        updateSelectAllButtons();
-        applyFilters();
-    });
-
-    const toggleAllPool = (select) => {
-        personalPool = select ? [...championNames] : [];
-        const isOnboarding = !onboardingOverlay.classList.contains('hidden');
-        const activeGrid = isOnboarding ? onboardGrid : championGrid;
-        activeGrid.querySelectorAll('.champ-badge').forEach(b => b.classList.toggle('pool-selected', select));
-        savePool();
-        updateSelectAllButtons();
-        triggerLivePrediction();
-    };
-
-    selectAllBtn.addEventListener('click', () => toggleAllPool(personalPool.length < championNames.length));
-    onboardSelectAll.addEventListener('click', () => toggleAllPool(personalPool.length < championNames.length));
-
-    let draggedSourceCard = null;
-
-    roleCards.forEach(card => {
-        card.addEventListener('click', (e) => {
+    cards.forEach(c => {
+        c.onclick = (e) => {
             e.stopPropagation();
-            if (e.target.classList.contains('target-btn')) {
-                const alreadyTarget = card.classList.contains('user-target');
-                roleCards.forEach(c => c.classList.remove('user-target'));
-                userTargetCard = alreadyTarget ? null : card;
-                if (!alreadyTarget) card.classList.add('user-target');
-                triggerLivePrediction();
+            if (e.target.closest('.target-btn')) {
+                const isTarget = c.classList.contains('user-target');
+                cards.forEach(x => x.classList.remove('user-target'));
+                targetCard = isTarget ? null : c;
+                if (!isTarget) c.classList.add('user-target');
+                predict();
                 return;
             }
-            if (e.target.classList.contains('clear-btn')) return clearSlot(card);
+            if (e.target.closest('.clear-btn')) return assign(c, 'Empty', true);
 
-            roleCards.forEach(c => c.classList.remove('active-selection'));
-            if (activeSlot === card) {
-                activeSlot = null;
-            } else {
-                activeSlot = card;
-                card.classList.add('active-selection');
-            }
-        });
+            cards.forEach(x => x.classList.remove('active-selection'));
+            activeSlot = (activeSlot === c) ? null : c;
+            if (activeSlot) c.classList.add('active-selection');
+        };
 
-        card.addEventListener('dragstart', (e) => {
-            if (!card.classList.contains('filled') || currentTab !== 'draft') {
-                return e.preventDefault();
-            }
-            const name = card.querySelector('.champ-name').textContent;
-            draggedSourceCard = card;
-            e.dataTransfer.setData('text/plain', name);
-            card.classList.add('dragging-card');
-        });
+        c.ondragstart = (e) => {
+            if (!c.classList.contains('filled')) return e.preventDefault();
+            dragCard = c;
+            e.dataTransfer.setData('text/plain', c.querySelector('.champ-name').textContent);
+        };
 
-        card.addEventListener('dragend', () => {
-            card.classList.remove('dragging-card');
-            roleCards.forEach(c => c.classList.remove('drag-over'));
-        });
+        c.ondragover = e => e.preventDefault();
 
-        card.addEventListener('dragover', (e) => {
+        c.ondrop = (e) => {
             e.preventDefault();
-            if (currentTab === 'draft') card.classList.add('drag-over');
-        });
+            const val = e.dataTransfer.getData('text/plain');
+            if (!val) return;
 
-        card.addEventListener('dragleave', () => card.classList.remove('drag-over'));
+            const isTargetFilled = c.classList.contains('filled');
+            const targetName = isTargetFilled ? c.querySelector('.champ-name').textContent : null;
 
-        card.addEventListener('drop', (e) => {
-            e.preventDefault();
-            card.classList.remove('drag-over');
-            const name = e.dataTransfer.getData('text/plain');
-            if (!name || currentTab !== 'draft') return;
-
-            if (draggedSourceCard && draggedSourceCard !== card) {
-                const targetFilled = card.classList.contains('filled');
-                const targetName = targetFilled ? card.querySelector('.champ-name').textContent : null;
-
-                // Move dragged champ to target slot
-                card.querySelector('.champ-name').textContent = name;
-                card.classList.add('filled');
-                card.setAttribute('draggable', 'true');
-
-                if (targetFilled && targetName) {
-                    // Swap target's champion to the source slot
-                    draggedSourceCard.querySelector('.champ-name').textContent = targetName;
-                    draggedSourceCard.classList.add('filled');
-                    draggedSourceCard.setAttribute('draggable', 'true');
-                } else {
-                    // Empty source slot
-                    draggedSourceCard.querySelector('.champ-name').textContent = 'Empty';
-                    draggedSourceCard.classList.remove('filled', 'active-selection');
-                    draggedSourceCard.removeAttribute('draggable');
-                }
-                draggedSourceCard = null;
-                triggerLivePrediction();
-            } else {
-                assignChampion(card, name);
+            assign(c, val);
+            if (dragCard && dragCard !== c) {
+                assign(dragCard, isTargetFilled ? targetName : 'Empty', false);
             }
-        });
+            dragCard = null;
+        };
     });
 
-    function assignChampion(card, name) {
-        if (!card) return;
-        if (card.classList.contains('filled')) {
-            const oldName = card.querySelector('.champ-name').textContent;
-            togglePoolChampion(oldName, false);
-        }
-        roleCards.forEach(c => {
-            if (c !== card && c.classList.contains('filled') && c.querySelector('.champ-name').textContent === name) clearSlot(c);
+    function assign(c, name, trigger = true) {
+        if (!c) return;
+        const oldName = c.querySelector('.champ-name').textContent;
+        if (oldName && oldName !== 'Empty') togglePicked(oldName, false);
+
+        const isFilled = name && name !== 'Empty';
+        c.querySelector('.champ-name').textContent = isFilled ? name : 'Empty';
+        c.classList.toggle('filled', isFilled);
+        c.classList.remove('active-selection');
+
+        if (isFilled) togglePicked(name, true);
+        if (activeSlot === c) activeSlot = null;
+        if (trigger) predict();
+    }
+
+    function togglePicked(name, isPicked) {
+        if (!name || name === 'Empty' || !grid) return;
+        const badge = Array.from(grid.children).find(b => b.textContent === name);
+        if (badge) badge.classList.toggle('picked', isPicked);
+        filter();
+    }
+
+    if (clearBtn) {
+        clearBtn.onclick = () => {
+            cards.forEach(c => {
+                assign(c, 'Empty', false);
+                c.classList.remove('user-target');
+            });
+            activeSlot = targetCard = null;
+            bluePct.textContent = redPct.textContent = '50.0%';
+            if (recBox) recBox.classList.add('hidden');
+            filter();
+        };
+    }
+
+    if (swapBtn) {
+        swapBtn.onclick = () => {
+            for (let i = 0; i < 5; i++) {
+                const bName = cards[i].querySelector('.champ-name').textContent;
+                const rName = cards[i + 5].querySelector('.champ-name').textContent;
+                assign(cards[i], rName, false);
+                assign(cards[i + 5], bName, false);
+            }
+            predict();
+        };
+    }
+
+    function predict() {
+        const payload = { blue_team: {}, red_team: {} };
+        let bCount = 0, rCount = 0;
+
+        cards.forEach(c => {
+            const txt = c.querySelector('.champ-name').textContent;
+            const val = txt === 'Empty' ? '' : txt;
+            payload[c.dataset.team + '_team'][c.dataset.role] = val;
+            if (val) (c.dataset.team === 'blue' ? bCount++ : rCount++);
         });
-        card.querySelector('.champ-name').textContent = name;
-        card.classList.add('filled');
-        card.setAttribute('draggable', 'true');
-        card.classList.remove('active-selection');
-        togglePoolChampion(name, true);
-        if (activeSlot === card) activeSlot = null;
-        triggerLivePrediction();
-    }
 
-    function clearSlot(card) {
-        if (!card || !card.classList.contains('filled')) return;
-        const name = card.querySelector('.champ-name').textContent;
-        card.querySelector('.champ-name').textContent = 'Empty';
-        card.classList.remove('filled', 'active-selection');
-        card.removeAttribute('draggable');
-        togglePoolChampion(name, false);
-        if (activeSlot === card) activeSlot = null;
-        triggerLivePrediction();
-    }
-
-    function togglePoolChampion(name, isPicked) {
-        const badge = championGrid.querySelector(`.champ-badge[data-name="${name}"]`);
-        if (badge) {
-            badge.classList.toggle('picked', isPicked);
-            applyFilters();
-        }
-    }
-
-    let currentPredictionSeq = 0;
-
-    function triggerLivePrediction() {
-        currentPredictionSeq++;
-        const seq = currentPredictionSeq;
-
-        const getVal = (team, role) => {
-            const card = document.querySelector(`.role-card[data-team="${team}"][data-role="${role}"]`);
-            return card.classList.contains('filled') ? card.querySelector('.champ-name').textContent : '';
-        };
-
-        const roles = ['top', 'jungle', 'mid', 'bot', 'support'];
-        const payload = {
-            blue_team: roles.reduce((acc, r) => ({ ...acc, [r]: getVal('blue', r) }), {}),
-            red_team: roles.reduce((acc, r) => ({ ...acc, [r]: getVal('red', r) }), {})
-        };
-
-        const blueCount = document.querySelectorAll('.role-card[data-team="blue"].filled').length;
-        const redCount = document.querySelectorAll('.role-card[data-team="red"].filled').length;
-
-        if (blueCount < 1 || redCount < 1) {
-            document.getElementById('blue-percent').textContent = '50.0%';
-            document.getElementById('red-percent').textContent = '50.0%';
-            document.getElementById('blue-bar').style.width = '50%';
-            recommendationsBox.classList.add('hidden');
+        if (!bCount || !rCount) {
+            bluePct.textContent = redPct.textContent = '50.0%';
+            if (recBox) recBox.classList.add('hidden');
             return;
         }
 
-        fetch(`${BACKEND_URL}/api/predict`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        })
-        .then(res => res.json())
-        .then(data => {
-            if (seq !== currentPredictionSeq || data.error) return;
-            const prob = data.probability;
-            document.getElementById('blue-percent').textContent = (prob * 100).toFixed(1) + '%';
-            document.getElementById('red-percent').textContent = ((1 - prob) * 100).toFixed(1) + '%';
-            document.getElementById('blue-bar').style.width = (prob * 100) + '%';
+        post('/api/predict', payload).then(data => {
+            if (data.error) return;
+            const p = data.probability;
+            bluePct.textContent = (p * 100).toFixed(1) + '%';
+            redPct.textContent = ((1 - p) * 100).toFixed(1) + '%';
 
-            if (userTargetCard && personalPool.length > 0) {
-                const userSide = userTargetCard.getAttribute('data-team');
-                const userRole = userTargetCard.getAttribute('data-role');
-
-                fetch(`${BACKEND_URL}/api/recommend`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        ...payload,
-                        user_side: userSide,
-                        user_role: userRole,
-                        candidates: personalPool
-                    })
-                })
-                .then(res => res.json())
-                .then(recData => {
-                    if (recData.error) return;
-                    recommendationsList.innerHTML = '';
-                    recommendationsBox.classList.remove('hidden');
-
-                    const currentWinRate = userSide === 'blue' ? prob : (1.0 - prob);
-                    recData.recommendations.forEach((item, index) => {
-                        const delta = item.win_rate - currentWinRate;
-                        const isPos = delta >= 0;
-                        const row = document.createElement('div');
-                        row.className = `recommendation-row ${isPos ? 'positive' : 'negative'}`;
-                        row.innerHTML = `
-                            <span>${index + 1}. ${item.name}</span>
-                            <span>
-                                <span class="rec-winrate">${(item.win_rate * 100).toFixed(1)}%</span>
-                                <span class="rec-delta ${isPos ? 'plus' : 'minus'}">${isPos ? '+' : ''}${(delta * 100).toFixed(1)}%</span>
-                            </span>
-                        `;
-                        recommendationsList.appendChild(row);
-                    });
-                })
-                .catch(err => console.error(err));
-            } else {
-                recommendationsBox.classList.add('hidden');
+            if (targetCard && pool.length) {
+                fetchRecommendations(payload);
+            } else if (recBox) {
+                recBox.classList.add('hidden');
             }
-        })
-        .catch(err => console.error(err));
+        });
     }
 
-    clearBtn.addEventListener('click', () => {
-        roleCards.forEach(clearSlot);
-        roleCards.forEach(c => c.classList.remove('user-target'));
-        userTargetCard = null;
-        poolSearch.value = '';
-        applyFilters();
-        triggerLivePrediction();
-    });
-
-    function setupOnboardingListeners() {
-        onboardSearch.addEventListener('input', applyFilters);
-
-        const closeOnboarding = () => {
-            localStorage.setItem('draft_predictor_onboarded', 'true');
-            onboardingOverlay.classList.add('hidden');
-            renderGrid(championGrid, false);
-            triggerLivePrediction();
-        };
-
-        onboardSkipBtn.addEventListener('click', () => {
-            personalPool = [];
-            savePool();
-            closeOnboarding();
+    function fetchRecommendations(payload) {
+        post('/api/recommend', {
+            ...payload,
+            user_side: targetCard.dataset.team,
+            user_role: targetCard.dataset.role,
+            candidates: pool
+        }).then(data => {
+            if (data.error || !data.recommendations || !recList || !recBox) return;
+            recList.innerHTML = '';
+            recBox.classList.remove('hidden');
+            data.recommendations.slice(0, 5).forEach(rec => {
+                const item = document.createElement('div');
+                item.className = 'rec-item';
+                item.innerHTML = `<span class="rec-name">${rec.champion}</span><span class="rec-diff">+${(rec.win_rate_increase * 100).toFixed(1)}%</span>`;
+                item.onclick = () => assign(targetCard, rec.champion);
+                recList.appendChild(item);
+            });
         });
-        onboardStartBtn.addEventListener('click', closeOnboarding);
     }
 });

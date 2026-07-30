@@ -92,9 +92,11 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             if (e.target.closest('.clear-btn')) return assign(c, 'Empty', true);
 
-            cards.forEach(x => x.classList.remove('active-selection'));
+            cards.forEach(x => x.classList.remove('active-selection', 'user-target'));
             activeSlot = (activeSlot === c) ? null : c;
-            if (activeSlot) c.classList.add('active-selection');
+            targetCard = activeSlot;
+            if (activeSlot) c.classList.add('active-selection', 'user-target');
+            predict();
         };
 
         c.ondragstart = (e) => {

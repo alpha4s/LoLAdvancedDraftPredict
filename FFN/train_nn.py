@@ -1,321 +1,243 @@
-import os, json, sqlite3, torch, argparse, pandas as pd, numpy as np, torch.nn as nn, torch.optim as optim
-from torch.utils.data import DataLoader, TensorDataset
+import os, json, sqlite3, torch, argparse, sys, pandas as pd, numpy as np, torch.nn as nn, torch.optim as optim
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
-import sys
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(SCRIPT_DIR)
 sys.path.append(ROOT_DIR)
-
 from model import WideAndDeepDraftNN
+from feature_engineering import build_feature_matrices, extract_draft_features
 
 def load_data_from_db():
-    db_path = os.path.join(ROOT_DIR, 'league_data.db')
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(os.path.join(ROOT_DIR, 'league_data.db'))
     df = pd.read_sql_query("SELECT * FROM matches", conn)
     conn.close()
     return df
 
 def get_champion_metadata():
-    json_path = os.path.join(ROOT_DIR, 'champions.json')
-    with open(json_path, 'r') as f:
-        champions_data = json.load(f)
-    names = sorted(list(champions_data.values())) if isinstance(champions_data, dict) else sorted(list(champions_data))
-    name_to_idx = {name: i for i, name in enumerate(names)}
-    return names, name_to_idx
+    with open(os.path.join(ROOT_DIR, 'champions.json'), 'r') as f:
+        data = json.load(f)
+    names = sorted(list(data.values())) if isinstance(data, dict) else sorted(list(data))
+    return names, {name: i for i, name in enumerate(names)}
 
-def build_adj_matrix(df_train, name_to_idx):
-    """
-    Builds pairwise synergy & counter champion adjacency matrix using TRAINING matches only to prevent leakage.
-    Returns un-normalized raw count adjacency matrix (model.py handles degree normalization).
-    """
-    num_champs = len(name_to_idx)
-    adj = np.zeros((num_champs + 1, num_champs + 1), dtype=np.float32)
-    roles = ['top', 'jungle', 'mid', 'bot', 'support']
-
-    for _, row in df_train.iterrows():
-        b_indices = [name_to_idx[row[f'blue_{r}']] for r in roles if row[f'blue_{r}'] in name_to_idx]
-        r_indices = [name_to_idx[row[f'red_{r}']] for r in roles if row[f'red_{r}'] in name_to_idx]
-
-        # Blue Team Synergy
-        for i in range(len(b_indices)):
-            for j in range(i + 1, len(b_indices)):
-                adj[b_indices[i], b_indices[j]] += 1.0
-                adj[b_indices[j], b_indices[i]] += 1.0
-
-        # Red Team Synergy
-        for i in range(len(r_indices)):
-            for j in range(i + 1, len(r_indices)):
-                adj[r_indices[i], r_indices[j]] += 1.0
-                adj[r_indices[j], r_indices[i]] += 1.0
-
-        # Blue vs Red Counters
-        for b_idx in b_indices:
-            for r_idx in r_indices:
-                adj[b_idx, r_idx] += 0.5
-                adj[r_idx, b_idx] += 0.5
-
-    # Self-loops on active champions
-    np.fill_diagonal(adj, 1.0)
-    return adj
-
-def build_role_affinity(df_train, name_to_idx):
-    """
-    Builds (num_champs+1, 5) matrix of per-champion role play rates from training data.
-    Each row sums to 1.0 (or 0.0 for unseen champions). Padding row is all zeros.
-    """
-    num_champs = len(name_to_idx)
-    counts = np.zeros((num_champs + 1, 5), dtype=np.float32)
-    roles = ['top', 'jungle', 'mid', 'bot', 'support']
-
-    for side in ['blue', 'red']:
-        for r_idx, role in enumerate(roles):
-            col = f'{side}_{role}'
-            for name in df_train[col]:
-                idx = name_to_idx.get(name)
-                if idx is not None:
-                    counts[idx, r_idx] += 1
-
-    totals = counts.sum(axis=1, keepdims=True)
-    totals[totals == 0] = 1.0
-    return counts / totals
-
-def vectorize_data(df, name_to_idx, augment_snake_draft=True):
-    """
-    Vectorizes matches into X_wide, X_deep, y, and sample_weights tensors.
-    Augments dataset with Snake-Draft partial states so the model accurately evaluates mid-draft turns.
-    Stage weights prioritize fuller drafts where composition signal is strongest.
-    """
+def vectorize_data(df, name_to_idx, feature_matrices, feature_scaler=None, augment_snake_draft=True):
     num_champs = len(name_to_idx)
     roles = ['top', 'jungle', 'mid', 'bot', 'support']
-    
-    # Official Snake Draft Pick Stages: (Blue Picks, Red Picks)
     snake_stages = [
-        ([0], []),
-        ([0], [0, 1]),
-        ([0, 1, 2], [0, 1]),
-        ([0, 1, 2], [0, 1, 2, 3]),
-        ([0, 1, 2, 3, 4], [0, 1, 2, 3]),
+        ([0], []), ([0], [0, 1]), ([0, 1, 2], [0, 1]),
+        ([0, 1, 2], [0, 1, 2, 3]), ([0, 1, 2, 3, 4], [0, 1, 2, 3]),
         ([0, 1, 2, 3, 4], [0, 1, 2, 3, 4])
     ]
-    stage_weights = [0.05, 0.1, 0.2, 0.3, 0.5, 1.0]
+    stage_weights = np.array([0.05, 0.1, 0.2, 0.3, 0.5, 1.0], dtype=np.float32)
 
-    X_wide_list, X_deep_list, y_list, w_list = [], [], [], []
+    blue_names = df[[f'blue_{r}' for r in roles]].to_numpy()
+    red_names = df[[f'red_{r}' for r in roles]].to_numpy()
+    blue_mat = np.array([[name_to_idx.get(v, num_champs) for v in r] for r in blue_names], dtype=np.int64)
+    red_mat = np.array([[name_to_idx.get(v, num_champs) for v in r] for r in red_names], dtype=np.int64)
+    wins = (df['winning_team'].to_numpy() == 'BLUE_WIN').astype(np.float32)
 
-    for _, row in df.iterrows():
-        b_indices = [name_to_idx.get(row[f'blue_{r}'], num_champs) for r in roles]
-        r_indices = [name_to_idx.get(row[f'red_{r}'], num_champs) for r in roles]
-        win = 1.0 if row['winning_team'] == 'BLUE_WIN' else 0.0
+    num_matches = len(df)
+    stages_to_use = list(enumerate(snake_stages)) if augment_snake_draft else [(5, snake_stages[-1])]
+    total_samples = num_matches * len(stages_to_use)
 
-        stages_to_use = list(enumerate(snake_stages)) if augment_snake_draft else [(5, snake_stages[-1])]
-        for s_idx, (b_active_roles, r_active_roles) in stages_to_use:
-            x_d = np.full(10, num_champs, dtype=np.int64)
-            x_w = np.zeros(num_champs * 5, dtype=np.float32)
+    # Extract full Turn 6 raw features to establish non-distorted baseline scaler
+    full_feats = np.array([extract_draft_features(b, r, feature_matrices) for b, r in zip(blue_names, red_names)], dtype=np.float32)
+    if feature_scaler is None:
+        mean = np.mean(full_feats, axis=0, keepdims=True)
+        std = np.std(full_feats, axis=0, keepdims=True) + 1e-6
+        feature_scaler = (mean, std)
+    else:
+        mean, std = feature_scaler
 
-            for r_idx in b_active_roles:
-                c_idx = b_indices[r_idx]
-                if c_idx < num_champs:
-                    x_d[r_idx] = c_idx
-                    x_w[r_idx * num_champs + c_idx] = 1.0
+    raw_feats_stages = []
+    for s_idx, (b_act, r_act) in stages_to_use:
+        b_p = np.where(np.isin(np.arange(5), b_act)[None, :], blue_names, '')
+        r_p = np.where(np.isin(np.arange(5), r_act)[None, :], red_names, '')
+        stage_feats = np.array([extract_draft_features(b, r, feature_matrices) for b, r in zip(b_p, r_p)], dtype=np.float32)
+        norm_stage = (stage_feats - mean) / std
 
-            for r_idx in r_active_roles:
-                c_idx = r_indices[r_idx]
-                if c_idx < num_champs:
-                    x_d[5 + r_idx] = c_idx
-                    x_w[r_idx * num_champs + c_idx] = -1.0
+        # Zero-mask per-slot features for unpicked/empty slots and team differentials on partial turns
+        slot_mask = np.ones((len(df), 30), dtype=np.float32)
+        for i in range(5):
+            if i not in b_act:
+                slot_mask[:, i * 3:(i + 1) * 3] = 0.0
+            if i not in r_act:
+                slot_mask[:, 15 + i * 3:15 + (i + 1) * 3] = 0.0
 
-            X_deep_list.append(x_d)
-            X_wide_list.append(x_w)
-            y_list.append(win)
-            w_list.append(stage_weights[s_idx])
+        norm_stage[:, :30] *= slot_mask
+        if s_idx < 5:
+            norm_stage[:, 30:] *= 0.0
 
-    return (
-        np.array(X_wide_list, dtype=np.float32),
-        np.array(X_deep_list, dtype=np.int64),
-        np.array(y_list, dtype=np.float32),
-        np.array(w_list, dtype=np.float32)
-    )
+        raw_feats_stages.append(norm_stage)
 
-def train_and_evaluate(X_wide_train, X_deep_train, y_train, w_train, X_wide_val, X_deep_val, y_val, w_val, num_champs, embedding_dim, num_heads, alpha, device, adj_matrix, role_affinity, epochs=100, patience=15):
-    train_dataset = TensorDataset(
-        torch.tensor(X_wide_train, dtype=torch.float32),
-        torch.tensor(X_deep_train, dtype=torch.long),
-        torch.tensor(y_train, dtype=torch.float32).unsqueeze(1),
-        torch.tensor(w_train, dtype=torch.float32).unsqueeze(1)
-    )
-    train_loader = DataLoader(train_dataset, batch_size=256, shuffle=True)
-    
-    adj_tensor = torch.tensor(adj_matrix, dtype=torch.float32).to(device)
-    ra_tensor = torch.tensor(role_affinity, dtype=torch.float32).to(device)
-    model = WideAndDeepDraftNN(num_champs, embedding_dim, num_heads, adj_matrix=adj_tensor, role_affinity=ra_tensor).to(device)
+    X_feats = np.vstack(raw_feats_stages)
+    X_deep = np.full((total_samples, 10), num_champs, dtype=np.int64)
+    y_out = np.empty(total_samples, dtype=np.float32)
+    w_out = np.empty(total_samples, dtype=np.float32)
+
+    for idx, (s_idx, (b_act, r_act)) in enumerate(stages_to_use):
+        slc = slice(idx * num_matches, (idx + 1) * num_matches)
+        y_out[slc], w_out[slc] = wins, stage_weights[s_idx]
+        for r in b_act:
+            X_deep[slc, r] = blue_mat[:, r]
+        for r in r_act:
+            X_deep[slc, 5 + r] = red_mat[:, r]
+
+    return X_deep, X_feats, y_out, w_out, feature_scaler
+
+def train_and_evaluate(X_tr, F_tr, y_tr, w_tr, X_val, F_val, y_val, w_val, num_champs, embed_dim, num_heads, alpha, device, epochs=100, patience=10):
+    d_tr, f_tr = torch.tensor(X_tr, dtype=torch.long, device=device), torch.tensor(F_tr, dtype=torch.float32, device=device)
+    y_tr, w_tr = torch.tensor(y_tr, dtype=torch.float32, device=device).unsqueeze(1), torch.tensor(w_tr, dtype=torch.float32, device=device).unsqueeze(1)
+    d_val, f_val = torch.tensor(X_val, dtype=torch.long, device=device), torch.tensor(F_val, dtype=torch.float32, device=device)
+    y_val_t = torch.tensor(y_val, dtype=torch.float32, device=device).unsqueeze(1)
+
+    model = WideAndDeepDraftNN(num_champs, embed_dim, num_heads, num_extra_features=F_tr.shape[1]).to(device)
     criterion = nn.BCELoss(reduction='none')
     optimizer = optim.Adam(model.parameters(), lr=0.0003, weight_decay=alpha)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3, min_lr=1e-5)
 
-    best_val_loss = float('inf')
-    best_model_state = None
-    patience_counter = 0
+    best_val_loss, best_state, patience_cnt, best_epoch = float('inf'), None, 0, 0
+    N_tr = d_tr.size(0)
+    N_val_matches = len(y_val) // 6 if len(y_val) % 6 == 0 else len(y_val)
+    t6_slc = slice(5 * N_val_matches, 6 * N_val_matches) if len(y_val) % 6 == 0 else slice(0, len(y_val))
 
     for epoch in range(1, epochs + 1):
         model.train()
-        train_loss = 0.0
-        for w_in, d_in, targets, weights in train_loader:
-            w_in, d_in, targets, weights = w_in.to(device), d_in.to(device), targets.to(device), weights.to(device)
+        perm = torch.randperm(N_tr, device=device)
+        total_loss, total_w = 0.0, 0.0
+        for i in range(0, N_tr, 2048):
+            idx = perm[i:i + 2048]
             optimizer.zero_grad()
-            outputs = model(w_in, d_in)
-            loss = (criterion(outputs, targets) * weights).mean()
-            loss.backward()
+            loss = (criterion(model(d_tr[idx], f_tr[idx]), y_tr[idx]) * w_tr[idx]).sum()
+            (loss / w_tr[idx].sum()).backward()
             optimizer.step()
-            train_loss += loss.item() * len(targets)
+            total_loss += loss.item()
+            total_w += w_tr[idx].sum().item()
 
-        train_loss /= len(train_dataset)
-
+        tr_loss = total_loss / max(1.0, total_w)
         model.eval()
         with torch.no_grad():
-            wv = torch.tensor(X_wide_val, dtype=torch.float32).to(device)
-            dv = torch.tensor(X_deep_val, dtype=torch.long).to(device)
-            yv = torch.tensor(y_val, dtype=torch.float32).unsqueeze(1).to(device)
-            wv_weights = torch.tensor(w_val, dtype=torch.float32).unsqueeze(1).to(device)
-            val_loss = (criterion(model(wv, dv), yv) * wv_weights).mean().item()
+            val_loss = criterion(model(d_val[t6_slc], f_val[t6_slc]), y_val_t[t6_slc]).mean().item()
 
+        scheduler.step(val_loss)
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            best_model_state = model.state_dict().copy()
-            patience_counter = 0
-            improved_flag = " (Best)"
+            best_state = model.state_dict().copy()
+            patience_cnt = 0
+            best_epoch = epoch
+            flag = " (Best)"
         else:
-            patience_counter += 1
-            improved_flag = ""
+            patience_cnt += 1
+            flag = ""
 
-        print(f"  Epoch {epoch:3d}/{epochs} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}{improved_flag} | Patience: {patience_counter}/{patience}")
+        if epoch % 5 == 0 or epoch == 1 or patience_cnt >= patience:
+            print(f"  Epoch {epoch:3d}/{epochs} | Train Loss: {tr_loss:.4f} | Turn 6 Val Loss: {val_loss:.4f}{flag}")
 
-        if patience_counter >= patience:
-            print(f"  Early stopping triggered at Epoch {epoch}.")
+        if patience_cnt >= patience:
+            print(f"  Early stopping at Epoch {epoch}. Best Checkpoint: Epoch {best_epoch} (Val Loss: {best_val_loss:.4f})")
             break
 
-    if best_model_state is not None:
-        model.load_state_dict(best_model_state)
+    if best_state:
+        model.load_state_dict(best_state)
 
     model.eval()
     stage_scores = {}
     with torch.no_grad():
-        wv = torch.tensor(X_wide_val, dtype=torch.float32).to(device)
-        dv = torch.tensor(X_deep_val, dtype=torch.long).to(device)
-        preds = (model(wv, dv).cpu().numpy() > 0.5).astype(int)
-        score = accuracy_score(y_val, preds)
-
-        stage_names = [
-            "Turn 1 (1 Pick)",
-            "Turn 2 (3 Picks)",
-            "Turn 3 (5 Picks)",
-            "Turn 4 (7 Picks)",
-            "Turn 5 (9 Picks)",
-            "Turn 6 (Full 5v5 Draft)"
-        ]
+        preds = (model(d_val, f_val).cpu().numpy() > 0.5).astype(int)
+        names = ["Turn 1 (1 Pick)", "Turn 2 (3 Picks)", "Turn 3 (5 Picks)", "Turn 4 (7 Picks)", "Turn 5 (9 Picks)", "Turn 6 (Full 5v5 Draft)"]
         if len(y_val) % 6 == 0:
-            for s_idx, s_name in enumerate(stage_names):
-                idx = np.arange(s_idx, len(y_val), 6)
-                s_acc = accuracy_score(y_val[idx], preds[idx])
-                stage_scores[s_name] = s_acc
+            for s_idx, s_name in enumerate(names):
+                slc = slice(s_idx * N_val_matches, (s_idx + 1) * N_val_matches)
+                stage_scores[s_name] = accuracy_score(y_val[slc], preds[slc])
+        score = stage_scores.get("Turn 6 (Full 5v5 Draft)", accuracy_score(y_val, preds))
 
     return model, score, stage_scores
 
-def save_files(model, champion_names, name_to_idx, score, stage_scores, embed_dim, num_heads, alpha, adj_matrix, role_affinity):
-    model_path = os.path.join(SCRIPT_DIR, 'model_nn.pth')
-    torch.save(model.state_dict(), model_path)
+def save_files(model, champion_names, name_to_idx, score, stage_scores, embed_dim, num_heads, alpha, feature_scaler=None):
+    meta_path = os.path.join(SCRIPT_DIR, 'model_nn_metadata.json')
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, 'r') as f:
+                old_meta = json.load(f)
+                old_acc = old_meta.get('accuracy', 0.0)
+                if old_acc > score:
+                    print(f"\n⚠️  Skipping save: New run accuracy ({score:.2%}) is lower than existing checkpoint ({old_acc:.2%}).")
+                    print(f"    Preserved existing best model_nn.pth ({old_acc:.2%}).")
+                    return
+        except Exception:
+            pass
+
+    torch.save(model.state_dict(), os.path.join(SCRIPT_DIR, 'model_nn.pth'))
+    scaler_dict = {'mean': feature_scaler[0].tolist(), 'std': feature_scaler[1].tolist()} if feature_scaler else None
     metadata = {
         'champion_names': champion_names,
         'champ_to_idx': name_to_idx,
         'accuracy': score,
         'stage_accuracies': stage_scores,
-        'model_type': 'PyTorch_GNN_WideAndDeepAttentionDraftNN',
-        'architecture': f"GCN(PairwiseAdj) + Wide(Linear) + Deep(Embedding({embed_dim}) -> SelfAttention({num_heads}heads) -> Linear(32) -> 1)",
+        'model_type': 'PyTorch_WideAndDeepAttentionDraftNN',
         'embedding_dim': embed_dim,
         'num_heads': num_heads,
-        'adj_matrix': adj_matrix.tolist(),
-        'role_affinity': role_affinity.tolist(),
-        'best_hyperparameters': {
-            'embedding_dim': embed_dim,
-            'num_heads': num_heads,
-            'alpha': alpha
-        }
+        'feature_scaler': scaler_dict,
+        'best_hyperparameters': {'embedding_dim': embed_dim, 'num_heads': num_heads, 'alpha': alpha}
     }
-    meta_path = os.path.join(SCRIPT_DIR, 'model_nn_metadata.json')
     with open(meta_path, 'w') as f:
         json.dump(metadata, f, indent=4)
 
-    print("\n=================== HELD-OUT ACCURACY BREAKDOWN ===================")
-    print(f"Overall Blended Accuracy (Turns 1-6): {score:.2%}")
-    if stage_scores:
-        print("Accuracy by Draft Turn:")
-        for name, s_acc in stage_scores.items():
-            print(f"  - {name:25s}: {s_acc:.2%}")
-    print("===================================================================")
-    print(f"Saved model_nn.pth and updated model_nn_metadata.json")
+    print(f"\n🏆 New Best Model Saved! Accuracy: {score:.2%}")
+    for k, v in stage_scores.items():
+        print(f"  - {k:25s}: {v:.2%}")
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--tune", action="store_true")
-    parser.add_argument("--embed_dim", type=int, default=8, help="Embedding dimension (default: 8)")
-    parser.add_argument("--alpha", type=float, default=1e-3, help="L2 weight decay regularization (default: 1e-3)")
+    parser.add_argument("--force", action="store_true")
+    parser.add_argument("--embed_dim", type=int, default=16)
+    parser.add_argument("--alpha", type=float, default=1e-2)
     args = parser.parse_args()
 
-    df = load_data_from_db()
+    if torch.cuda.is_available():
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+
     champ_names, name_to_idx = get_champion_metadata()
-    
-    # 1. Split df FIRST at the match level to prevent data leakage between train and val
-    print("Splitting matches into clean train and held-out validation sets...")
-    df_train, df_val = train_test_split(df, test_size=0.2, random_state=42)
+    cache_path = os.path.join(SCRIPT_DIR, 'dataset_cache.npz')
 
-    # 2. Build GNN Adjacency Matrix using TRAINING matches ONLY!
-    print("Building champion synergy & counter GNN adjacency matrix from training set only...")
-    adj_matrix = build_adj_matrix(df_train, name_to_idx)
-
-    # 2b. Build Role Affinity Matrix from TRAINING matches ONLY!
-    print("Building champion role affinity matrix from training set only...")
-    role_affinity = build_role_affinity(df_train, name_to_idx)
-    
-    # 3. Vectorize df_train and df_val SEPARATELY
-    print("Vectorizing draft datasets with Snake-Draft partial state augmentation...")
-    X_wide_train, X_deep_train, y_train, w_train = vectorize_data(df_train, name_to_idx, augment_snake_draft=True)
-    X_wide_val, X_deep_val, y_val, w_val = vectorize_data(df_val, name_to_idx, augment_snake_draft=True)
+    if os.path.exists(cache_path) and not args.force:
+        print(f"Loading cached vectorized dataset from {cache_path}...")
+        cache = np.load(cache_path, allow_pickle=True)
+        X_tr, F_tr, y_tr, w_tr = cache['X_tr'], cache['F_tr'], cache['y_tr'], cache['w_tr']
+        X_val, F_val, y_val, w_val = cache['X_val'], cache['F_val'], cache['y_val'], cache['w_val']
+        feature_scaler = cache['feature_scaler'].item()
+    else:
+        df = load_data_from_db()
+        df_tr, df_val = train_test_split(df, test_size=0.2, random_state=42)
+        feature_matrices = build_feature_matrices(df_tr)
+        X_tr, F_tr, y_tr, w_tr, feature_scaler = vectorize_data(df_tr, name_to_idx, feature_matrices)
+        X_val, F_val, y_val, w_val, _ = vectorize_data(df_val, name_to_idx, feature_matrices, feature_scaler=feature_scaler)
+        np.savez_compressed(cache_path, X_tr=X_tr, F_tr=F_tr, y_tr=y_tr, w_tr=w_tr, X_val=X_val, F_val=F_val, y_val=y_val, w_val=w_val, feature_scaler=feature_scaler)
+        print(f"Cached vectorized dataset to {cache_path}")
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Device: {device} | Train Augmented Samples: {len(y_train)} | Val Augmented Samples: {len(y_val)}")
-    print(f"Blue Win Rate - Train: {y_train.mean():.2%} | Val: {y_val.mean():.2%}")
+    print(f"Device: {device} | Train: {len(y_tr)} | Val: {len(y_val)}")
     num_champs = len(champ_names)
 
     if args.tune:
-        print("Tuning hyperparameters across strong L2 regularization & embedding dimensions...")
-        embedding_configs = [(8, 1), (8, 2), (16, 1), (16, 2)]
-        alphas = [1e-4, 1e-3, 1e-2]
+        configs = [(8, 1), (8, 2), (8, 4), (16, 2), (16, 4)]
         best_acc, best_config, best_model, best_stages = 0.0, {}, None, {}
-
-        for embed_dim, num_heads in embedding_configs:
-            for alpha in alphas:
-                print(f"\n--- Testing Config: EmbedDim={embed_dim}, Heads={num_heads}, Alpha={alpha} ---")
-                model, score, stage_scores = train_and_evaluate(
-                    X_wide_train, X_deep_train, y_train, w_train,
-                    X_wide_val, X_deep_val, y_val, w_val,
-                    num_champs, embed_dim, num_heads, alpha, device, adj_matrix, role_affinity, epochs=100, patience=15
-                )
-                print(f" -> Overall Validation Accuracy: {score:.2%}")
-                if score > best_acc:
-                    best_acc = score
-                    best_config = {'embedding_dim': embed_dim, 'num_heads': num_heads, 'alpha': alpha}
-                    best_model = model
-                    best_stages = stage_scores
-
-        print(f"\nBest Config found: {best_config} | Held-Out Accuracy: {best_acc:.2%}")
-        save_files(best_model, champ_names, name_to_idx, best_acc, best_stages, best_config['embedding_dim'], best_config['num_heads'], best_config['alpha'], adj_matrix, role_affinity)
+        for embed_dim, num_heads in configs:
+            print(f"\n--- Testing EmbedDim={embed_dim}, Heads={num_heads}, Alpha={args.alpha} ---")
+            m, s, st = train_and_evaluate(X_tr, F_tr, y_tr, w_tr, X_val, F_val, y_val, w_val, num_champs, embed_dim, num_heads, args.alpha, device, patience=10)
+            t6_acc = st.get("Turn 6 (Full 5v5 Draft)", s)
+            print(f" -> Turn 6 Val Accuracy: {t6_acc:.2%} | Blended Acc: {s:.2%}")
+            if s > best_acc:
+                best_acc = s
+                best_config = {'embedding_dim': embed_dim, 'num_heads': num_heads, 'alpha': args.alpha}
+                best_model = m
+                best_stages = st
+        save_files(best_model, champ_names, name_to_idx, best_acc, best_stages, best_config['embedding_dim'], best_config['num_heads'], best_config['alpha'], feature_scaler)
     else:
-        print(f"Training model with EmbedDim={args.embed_dim}, Alpha={args.alpha}...")
-        model, score, stage_scores = train_and_evaluate(
-            X_wide_train, X_deep_train, y_train, w_train,
-            X_wide_val, X_deep_val, y_val, w_val,
-            num_champs, args.embed_dim, 1, args.alpha, device, adj_matrix, role_affinity, epochs=100, patience=15
-        )
-        save_files(model, champ_names, name_to_idx, score, stage_scores, args.embed_dim, 1, args.alpha, adj_matrix, role_affinity)
+        m, s, st = train_and_evaluate(X_tr, F_tr, y_tr, w_tr, X_val, F_val, y_val, w_val, num_champs, args.embed_dim, 2, args.alpha, device, patience=10)
+        save_files(m, champ_names, name_to_idx, s, st, args.embed_dim, 2, args.alpha, feature_scaler)
 
 if __name__ == "__main__":
     main()

@@ -28,6 +28,7 @@ body {
 
 #pool-search {
     border: none;
+    color: inherit;
     padding: 6px 12px;
     width: 160px;
 }

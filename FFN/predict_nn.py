@@ -1,58 +1,39 @@
-import torch, json, os, numpy as np, torch.nn as nn
+import os
+import sys
+import json
+import torch
+import numpy as np
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-
-import sys
-sys.path.append(os.path.dirname(SCRIPT_DIR))
 from model import WideAndDeepDraftNN
+from feature_engineering import load_feature_matrices, extract_draft_features
 
 def get_champion_by_name(name, champ_to_idx):
     """
-    Search mapping dictionary for champion name, resolving common abbreviations, punctuation, and capitalization.
+    Search mapping dictionary for champion name using alphanumeric normalization and substring fallback.
     """
-    def normalize(s):
-        return "".join(c for c in s.lower() if c.isalnum()) if s else ""
-    
-    aliases = {
-        'wukong': 'monkeyking',
-        'nunuandwillump': 'nunu',
-        'renataglasc': 'renata',
-        'tf': 'twistedfate',
-        'mf': 'missfortune',
-        'asol': 'aurelionsol',
-        'gp': 'gangplank',
-        'morg': 'morgana',
-        'yi': 'masteryi',
-        'blitz': 'blitzcrank',
-        'lb': 'leblanc',
-        'kass': 'kassadin',
-        'mumu': 'amumu',
-        'panth': 'pantheon',
-        'renek': 'renekton',
-        'tahm': 'tahmkench',
-        'vlad': 'vladimir',
-        'ww': 'warwick',
-    }
-    
-    norm_input = normalize(name)
+    if not name:
+        return None
+
+    norm_input = "".join(c for c in str(name).lower() if c.isalnum())
     if not norm_input:
         return None
 
-    if norm_input in aliases:
-        norm_input = aliases[norm_input]
-        
-    champ_to_idx_norm = {normalize(k): v for k, v in champ_to_idx.items()}
-    
-    # 1. Exact Match
+    champ_to_idx_norm = {
+        "".join(c for c in k.lower() if c.isalnum()): v 
+        for k, v in champ_to_idx.items()
+    }
+
+    # 1. Exact Normalized Match
     if norm_input in champ_to_idx_norm:
         return champ_to_idx_norm[norm_input]
-        
-    # 2. Substring Fallback (only for inputs >= 4 chars to prevent short string collisions like 'vi')
+
+    # 2. Substring Fallback (for inputs >= 4 chars to avoid short collisions)
     if len(norm_input) >= 4:
         for k, v in champ_to_idx_norm.items():
             if norm_input in k:
                 return v
-            
+
     return None
 
 def predict_match(blue_team, red_team):
@@ -61,94 +42,87 @@ def predict_match(blue_team, red_team):
     """
     model_path = os.path.join(SCRIPT_DIR, 'model_nn.pth')
     meta_path = os.path.join(SCRIPT_DIR, 'model_nn_metadata.json')
-    
+
     if not os.path.exists(model_path) or not os.path.exists(meta_path):
-        print("Error: PyTorch Wide & Deep model or metadata not found. Please train/tune the model first.")
+        print("Error: PyTorch Wide & Deep model or metadata not found. Please train the model first.")
         return
 
     with open(meta_path, 'r') as f:
         meta = json.load(f)
-    
+
     champion_names = meta['champion_names']
     champ_to_idx = meta['champ_to_idx']
     embedding_dim = meta.get('embedding_dim', 16)
-    num_heads = meta.get('num_heads', 1)
-    
+    num_heads = meta.get('num_heads', 2)
+    scaler_dict = meta.get('feature_scaler')
     num_champs = len(champion_names)
-    padding_idx = num_champs
-    
-    adj_matrix = meta.get('adj_matrix', None)
-    if adj_matrix is not None:
-        adj_matrix = torch.tensor(adj_matrix, dtype=torch.float32)
-    role_affinity = meta.get('role_affinity', None)
-    if role_affinity is not None:
-        role_affinity = torch.tensor(role_affinity, dtype=torch.float32)
-    
-    # Initialize the PyTorch model
-    model = WideAndDeepDraftNN(num_champs, embedding_dim, num_heads, adj_matrix=adj_matrix, role_affinity=role_affinity)
+
+    if scaler_dict:
+        feature_mean = np.array(scaler_dict['mean'], dtype=np.float32)
+        feature_std = np.array(scaler_dict['std'], dtype=np.float32)
+    else:
+        feature_mean, feature_std = np.zeros((1, 32), dtype=np.float32), np.ones((1, 32), dtype=np.float32)
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = WideAndDeepDraftNN(num_champs=num_champs, embedding_dim=embedding_dim, num_heads=num_heads, num_extra_features=32)
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.to(device)
     model.eval()
-    
-    # Lowercase inputs for matching
+
     blue_team = {k.lower(): v for k, v in blue_team.items()}
     red_team = {k.lower(): v for k, v in red_team.items()}
-    
-    X_wide = np.zeros(num_champs * 5, dtype=np.float32)
-    X_deep = np.zeros(10, dtype=np.int64)
-    X_deep.fill(padding_idx)
-    
     roles = ['top', 'jungle', 'mid', 'bot', 'support']
-    
-    print("Blue Team:")
-    for r_idx, role in enumerate(roles):
-        champ = blue_team.get(role)
-        idx = get_champion_by_name(champ, champ_to_idx) if champ else None
-        if idx is not None:
-            X_deep[r_idx] = idx
-            X_wide[r_idx * num_champs + idx] = 1.0
-            print(f"  {role.upper():7s}: {champion_names[idx]}")
-        else:
-            print(f"  {role.upper():7s}: Warning: '{champ}' not found in model.")
-    
-    print("\nRed Team:")
-    for r_idx, role in enumerate(roles):
-        champ = red_team.get(role)
-        idx = get_champion_by_name(champ, champ_to_idx) if champ else None
-        if idx is not None:
-            X_deep[5 + r_idx] = idx
-            X_wide[r_idx * num_champs + idx] = -1.0
-            print(f"  {role.upper():7s}: {champion_names[idx]}")
-        else:
-            print(f"  {role.upper():7s}: Warning: '{champ}' not found in model.")
- 
-    # Convert vectors to PyTorch Tensors
-    w_tensor = torch.tensor(X_wide, dtype=torch.float32).unsqueeze(0).to(device)
-    d_tensor = torch.tensor(X_deep, dtype=torch.long).unsqueeze(0).to(device)
-    
-    with torch.no_grad():
-        probability = model(w_tensor, d_tensor).item()
 
-    print(f"\n--- Result (Wide & Deep Attention Network) ---")
-    print(f"Win Probability (Blue): {probability:.2%}")
-    print(f"Win Probability (Red):  {(1-probability):.2%}")
-    print(f"Predicted Winner: {'BLUE' if probability > 0.5 else 'RED'}")
+    X_deep = np.full(10, num_champs, dtype=np.int64)
+
+    teams_to_process = [
+        ("Blue Team", blue_team, 0),
+        ("Red Team", red_team, 5)
+    ]
+
+    for side_name, team_dict, offset in teams_to_process:
+        print(f"\n{side_name}:")
+        for r_idx, role in enumerate(roles):
+            champ_name = team_dict.get(role)
+            champ_idx = get_champion_by_name(champ_name, champ_to_idx) if champ_name else None
+
+            if champ_idx is not None:
+                X_deep[offset + r_idx] = champ_idx
+                print(f"  {role.upper():7s}: {champion_names[champ_idx]}")
+            else:
+                print(f"  {role.upper():7s}: Warning: '{champ_name}' not found in model.")
+
+    blue_champs = [blue_team.get(r, '') for r in roles]
+    red_champs = [red_team.get(r, '') for r in roles]
+    feature_matrices = load_feature_matrices()
+    raw_feats = extract_draft_features(blue_champs, red_champs, feature_matrices).reshape(1, -1)
+    norm_feats = (raw_feats - feature_mean) / feature_std
+
+    d_tensor = torch.tensor(X_deep, dtype=torch.long).unsqueeze(0).to(device)
+    f_tensor = torch.tensor(norm_feats, dtype=torch.float32).to(device)
+
+    with torch.no_grad():
+        win_prob_blue = model(d_tensor, f_tensor).item()
+
+    print(f"\n=================== MATCH PREDICTION ===================")
+    print(f"Blue Team Win Probability : {win_prob_blue:.2%}")
+    print(f"Red Team Win Probability  : {(1.0 - win_prob_blue):.2%}")
+    print(f"Predicted Winner          : {'BLUE WIN' if win_prob_blue > 0.5 else 'RED WIN'}")
+    print(f"=======================================================")
 
 if __name__ == "__main__":
-    # Sample Test Case
-    blue = {
-        'top': 'sona',
-        'jungle': 'gwen',
-        'mid': 'soraka',
-        'bot': 'senna',
-        'support': 'taric'
+    blue_sample = {
+        'top': 'Sona',
+        'jungle': 'Gwen',
+        'mid': 'Soraka',
+        'bot': 'Senna',
+        'support': 'Taric'
     }
-    red = {
-        'top': 'yuumi',
-        'jungle': 'zed',
-        'mid': 'darius',
-        'bot': 'locke',
-        'support': 'malphite'
+    red_sample = {
+        'top': 'Yuumi',
+        'jungle': 'Zed',
+        'mid': 'Darius',
+        'bot': 'Lux',
+        'support': 'Malphite'
     }
-    predict_match(blue, red)
+    predict_match(blue_sample, red_sample)

@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 .venv/
 env/
+*.npz
+FFN/dataset_cache.npz
+.DS_Store

@@ -349,18 +349,18 @@
         "Zoe": 171,
         "Zyra": 172
     },
-    "accuracy": 0.5238571428571429,
+    "accuracy": 0.5242857142857142,
     "stage_accuracies": {
-        "Turn 1 (1 Pick)": 0.505,
-        "Turn 2 (3 Picks)": 0.5108571428571429,
+        "Turn 1 (1 Pick)": 0.5054285714285714,
+        "Turn 2 (3 Picks)": 0.5092857142857142,
         "Turn 3 (5 Picks)": 0.51,
-        "Turn 4 (7 Picks)": 0.5198571428571429,
-        "Turn 5 (9 Picks)": 0.5243571428571429,
-        "Turn 6 (Full 5v5 Draft)": 0.5238571428571429
+        "Turn 4 (7 Picks)": 0.5206428571428572,
+        "Turn 5 (9 Picks)": 0.524,
+        "Turn 6 (Full 5v5 Draft)": 0.5242857142857142
     },
     "model_type": "PyTorch_WideAndDeepAttentionDraftNN",
     "embedding_dim": 8,
-    "num_heads": 1,
+    "num_heads": 4,
     "feature_scaler": {
         "mean": [
             [
@@ -437,7 +437,7 @@
     },
     "best_hyperparameters": {
         "embedding_dim": 8,
-        "num_heads": 1,
+        "num_heads": 4,
         "alpha": 0.01
     }
 }

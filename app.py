@@ -178,7 +178,7 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
             with torch.no_grad():
                 probs = model(batch_d_tensor, batch_f_tensor).squeeze(-1).cpu().numpy()
 
-            recs = [{"champion": cand, "win_rate": float(probs[i])} for i, cand in enumerate(valid_candidates)]
+            recs = [{"name": cand, "win_rate": float(probs[i])} for i, cand in enumerate(valid_candidates)]
             recs.sort(key=lambda x: x['win_rate'], reverse=(user_side == 'blue'))
 
             return self.send_resp(200, 'application/json', {"recommendations": recs[:10]})

@@ -16,6 +16,10 @@ class WideAndDeepDraftNN(nn.Module):
         nn.init.normal_(self.slot_proj.weight, std=0.01)
         nn.init.zeros_(self.slot_proj.bias)
 
+        self.role_gate = nn.Linear(1, 1)
+        nn.init.constant_(self.role_gate.weight, 5.0)
+        nn.init.constant_(self.role_gate.bias, -1.0)
+
         num_team_features = max(0, num_extra_features - NUM_SLOT_TOTAL_FEATS)
         fc_input_dim = 3 * embedding_dim + num_team_features
         self.ln1 = nn.LayerNorm(embedding_dim)
@@ -40,7 +44,9 @@ class WideAndDeepDraftNN(nn.Module):
         sequence = self.champ_embeddings(x_deep) + self.role_embeddings(role_idx)
         if x_features is not None and x_features.shape[1] >= NUM_SLOT_TOTAL_FEATS:
             slot_feats = x_features[:, :NUM_SLOT_TOTAL_FEATS].view(bsz, 10, NUM_SLOT_FEATS_PER_CHAMP)
-            sequence = self.slot_proj(torch.cat([sequence, slot_feats], dim=-1))
+            role_freqs = slot_feats[:, :, 2:3]
+            gate = torch.sigmoid(self.role_gate(role_freqs))
+            sequence = self.slot_proj(torch.cat([sequence, slot_feats], dim=-1)) * gate
             team_feats = x_features[:, NUM_SLOT_TOTAL_FEATS:]
         else:
             team_feats = x_features

@@ -38,11 +38,6 @@ PowerShell:
 $env:RIOT_API_KEY = "RGAPI-your-key-here"
 ```
 
-macOS or Linux:
-
-```bash
-export RIOT_API_KEY="RGAPI-your-key-here"
-```
 
 The crawler reads this variable at startup, so the key does not need to be stored in a project file. Development keys expire every 24 hours and must be replaced when they expire. The included routing defaults target North America (`americas`/`na1`).
 

@@ -1,51 +1,106 @@
 # League of Legends Draft Win Predictor
 
-This project uses a recursive crawler to gather match data from the League of Legends API, trains a PyTorch Wide & Deep Self-Attention Network to predict draft outcomes
+A draft-only machine-learning project that estimates the Blue and Red teams' win probabilities from their selected champions. It collects recent ranked matches with the Riot Games API, trains a small PyTorch wide-and-deep model, exports it to ONNX, and runs predictions locally in the browser.
 
-## Legal Disclaimer
+## What It Does
 
-This project isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone officially involved in producing or managing League of Legends. League of Legends and Riot Games are trademarks or registered trademarks of Riot Games, Inc. League of Legends © Riot Games, Inc.
+- Crawls ranked Summoner's Rift matches and stores drafts in SQLite.
+- Learns champion and champion-role effects from match outcomes.
+- Uses simple draft statistics for role frequency, damage profile, off-meta picks, and selected lane matchups.
+- Supports incomplete drafts by training on randomly masked champion selections.
+- Exports a self-contained ONNX model that accepts ten champion IDs.
+- Provides a drag-and-drop draft interface with live win probabilities and champion recommendations.
 
-## Features
+## Model
 
-- **Data Crawler**: A Breadth-First Search (BFS) crawler that parses match histories using `riotwatcher` and stores high-quality Plat+ solo queue drafts in a local SQLite database.
-- **Wide & Deep Attention Network**:
-  - **Wide Model**: A linear layer tracking raw champion role-specific win rates.
-  - **Deep Model**: Employs embedding layers and a Multi-head Self-Attention (Transformer) block to dynamically learn champion synergies and lane counters.
-- **Interactive Web Client**: A local web server featuring a flat, clean dark theme, drag-and-drop drafts, auto-completing champion grids, and real-time win rate updates.
-- **Live Recommender**: Select your target slot and pool of champions to receive a sorted recommendation list showing exact win probability deltas.
+The model has two paths:
+
+- **Wide path:** learns a direct contribution for each champion in each role.
+- **Deep path:** converts the ten selected champions into learned vectors, combines them with precomputed draft statistics, and passes them through a small `64 -> 32 -> 1` neural network using LayerNorm and GELU.
+
+The precomputed statistics are stored as frozen lookup tables inside the model. Because those lookups are included in the ONNX export, the browser only needs to send champion IDs and cannot disagree with Python about feature calculations.
+
+This model intentionally uses draft information only. It does not know player skill, team communication, item choices, or events that occur during the match, so its accuracy should be interpreted as draft-level signal rather than a complete game prediction.
 
 ## Setup
 
-1. **Install Dependencies**:
+Python 3.10 or newer is recommended.
 
-   ```bash
-   pip install torch numpy scikit-learn riotwatcher
-   ```
+```bash
+pip install torch numpy pandas scikit-learn riotwatcher onnx
+```
 
-2. **Riot API Key**:
-   Get a development key from the [Riot Developer Portal](https://developer.riotgames.com/) and paste it into `data_crawler.py`.
+Get a development API key from the [Riot Developer Portal](https://developer.riotgames.com/). Configure the key locally before running the crawler, and do not commit an active key to the repository.
 
 ## Usage
 
-1. **Collect Data**:
-   Build your SQLite database:
+### 1. Collect matches
 
-   ```bash
-   python data_crawler.py
-   ```
+```bash
+python data_crawler.py
+```
 
-2. **Train & Tune Model**:
-   Tune hyperparameters and train the network:
-   ```bash
-   python FFN/tune_nn.py
-   ```
+The crawler creates `league_data.db`, resumes from previously processed players, and collects champion drafts plus the participant damage statistics used to create champion damage profiles. The current training pipeline keeps only matches whose game version begins with `16` so older seasons do not influence the model.
 
-## Notes on Patch Sensitivity
+### 2. Train and export the model
 
-The model maps champions by their name strings rather than static stats, so it will not break when Riot releases new balance patches. To keep the counter-picks and win-rate statistics accurate to the current "Meta," run the crawler and re-train the model every few weeks.
+```bash
+python FFN/train_nn.py
+```
+
+Training performs an 80/20 train-validation split, builds feature tables from the training split only, trains the model, reports validation accuracy, saves the PyTorch weights, and exports the browser model:
+
+- `FFN/model_nn.pth`
+- `FFN/model_nn_metadata.json`
+- `FFN/model_nn.onnx`
+
+### 3. Run the interface
+
+From the project directory, start a local static server:
+
+```bash
+python -m http.server 8000
+```
+
+Then open [http://localhost:8000](http://localhost:8000). A local server is required because the interface loads JavaScript modules, JSON metadata, and the ONNX model as separate files.
+
+## Evaluation
+
+The final result should be compared with a majority-class baseline, such as always predicting the side that wins most frequently in the validation data. Report both numbers rather than presenting accuracy without context.
+
+The current model was trained and evaluated using approximately 76,000 season-16 matches. Feature statistics were calculated from the training split only.
+
+```text
+Validation matches: 15,261
+Majority baseline:  50.77%
+Draft model:        52.45%
+Improvement:        +1.68 percentage points
+```
+
+The reported number is held-out validation accuracy. Validation loss is used to select the exported checkpoint, so this is not presented as accuracy on a separate untouched test set. Incomplete drafts remain close to chance because they contain less information; the headline result uses complete 10-champion drafts.
+
+## Project Layout
+
+```text
+data_crawler.py          Riot API crawler and SQLite storage
+feature_engineering.py   Training-only aggregate feature calculations
+model.py                 PyTorch wide-and-deep model
+FFN/train_nn.py          Training, validation, checkpointing, and ONNX export
+FFN/predict_nn.py        Python prediction helper
+static/js/               Browser interface and ONNX inference
+index.html               Draft interface
+config.py                Shared paths and model configuration
+```
+
+## Patch Sensitivity
+
+Champion balance, builds, and matchups change between patches. The model will continue recognizing existing champion names, but its learned relationships become stale over time. Recollect recent matches and retrain when the model should represent a newer patch.
+
+## Legal Disclaimer
+
+This project is not endorsed by Riot Games and does not reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games and League of Legends are trademarks or registered trademarks of Riot Games, Inc. League of Legends &copy; Riot Games, Inc.
 
 ## Credits
 
-- **[RiotWatcher](https://github.com/pseudonym117/RiotWatcher)**: Python library for the Riot Games API.
-- **Riot Games**: For providing the developer API.
+- [RiotWatcher](https://github.com/pseudonym117/RiotWatcher) for the Python Riot Games API wrapper.
+- Riot Games for providing the developer API.

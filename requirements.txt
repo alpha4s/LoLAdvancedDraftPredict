@@ -1,5 +1,6 @@
 torch
 numpy
-scikit-learn
 pandas
+scikit-learn
 riotwatcher
+onnx

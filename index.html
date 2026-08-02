@@ -23,10 +23,14 @@
                 <span id="red-percent">50.0%</span>
             </div>
             <div class="top-actions">
-                <button id="swap-teams-btn" class="icon-btn" title="Swap Blue & Red teams">⇄</button>
-                <button id="clear-btn" class="icon-btn" title="Reset all picks">↺</button>
+                <button id="swap-teams-btn" class="icon-btn" title="Swap Blue & Red teams" aria-label="Swap Blue and Red teams">&#8644;</button>
+                <button id="clear-btn" class="icon-btn" title="Reset all picks" aria-label="Reset all picks">&#8634;</button>
             </div>
         </header>
+
+        <div id="model-status" class="model-status loading" role="status" aria-live="polite">
+            Loading prediction model&hellip;
+        </div>
 
         <!-- Main 2-Column Workspace -->
         <main class="workspace" id="draft-view">
@@ -116,7 +120,7 @@
                 <div class="board-header">
                     <div>
                         <span class="rate-label">CHAMPIONS</span>
-                        <span style="margin-left: 6px;">(right click to add to pool of your champs)</span>
+                        <span class="pool-help">Right-click a champion to add it to your pool.</span>
                     </div>
                     <div class="board-controls">
                         <input type="text" id="pool-search" placeholder="Filter champions..." autocomplete="off">
@@ -128,10 +132,11 @@
         </main>
 
         <footer class="disclaimer">
-            ⚠ Off-meta picks (e.g. Ashe Jungle) are underrepresented in training data so you may see non-sensical predictions in such cases. Predictions become progressively more accurate as more champions are locked in. Not affiliated with or endorsed by Riot Games.
+            &#9888; Off-meta picks (e.g. Ashe Jungle) are underrepresented in training data, so predictions may be less reliable. Predictions become progressively more accurate as more champions are locked in. Not affiliated with or endorsed by Riot Games.
         </footer>
     </div>
 
-    <script src="static/script.js?v=39.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
+    <script type="module" src="static/js/app.js"></script>
 </body>
 </html>

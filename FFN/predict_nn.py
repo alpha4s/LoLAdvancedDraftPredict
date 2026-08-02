@@ -1,128 +1,124 @@
-import os
-import sys
-import json
-import torch
-import numpy as np
+import os, sys, json, torch, numpy as np
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(SCRIPT_DIR)
+if ROOT_DIR not in sys.path:
+    sys.path.append(ROOT_DIR)
+
+from config import MODEL_META_PATH, MODEL_WEIGHTS_PATH, ROLES, EMBEDDING_DIM
 from model import WideAndDeepDraftNN
-from feature_engineering import load_feature_matrices, extract_draft_features
+from feature_engineering import load_feature_matrices
 
-def get_champion_by_name(name, champ_to_idx):
-    """
-    Search mapping dictionary for champion name using alphanumeric normalization and substring fallback.
-    """
-    if not name:
-        return None
+class DraftPredictor:
+    def __init__(self):
+        with open(MODEL_META_PATH, 'r') as f:
+            meta = json.load(f)
 
-    norm_input = "".join(c for c in str(name).lower() if c.isalnum())
-    if not norm_input:
-        return None
+        self.champion_names = meta['champion_names']
+        self.champ_to_idx = meta['champ_to_idx']
+        self.num_champs = len(self.champion_names)
+        self.roles = ROLES
 
-    champ_to_idx_norm = {
-        "".join(c for c in k.lower() if c.isalnum()): v 
-        for k, v in champ_to_idx.items()
-    }
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        
+        # Build feature tensors for model lookup
+        feature_matrices = load_feature_matrices()
+        ap_ratios = np.zeros((self.num_champs + 1, 1), dtype=np.float32)
+        ap_variances = np.zeros((self.num_champs + 1, 1), dtype=np.float32)
+        role_freqs = np.zeros((self.num_champs + 1, 5), dtype=np.float32)
 
-    # 1. Exact Normalized Match
-    if norm_input in champ_to_idx_norm:
-        return champ_to_idx_norm[norm_input]
+        stride = self.num_champs + 1
+        top_counters = np.zeros((stride * stride, 1), dtype=np.float32)
+        mid_counters = np.zeros((stride * stride, 1), dtype=np.float32)
+        supp_counters = np.zeros((stride * stride, 1), dtype=np.float32)
 
-    # 2. Substring Fallback (for inputs >= 4 chars to avoid short collisions)
-    if len(norm_input) >= 4:
-        for k, v in champ_to_idx_norm.items():
-            if norm_input in k:
-                return v
+        ap_ratio_dict = feature_matrices.get('champ_ap_ratios', {})
+        ap_variance_dict = feature_matrices.get('champ_ap_variances', {})
+        role_freq_dict = feature_matrices.get('role_freqs', {})
+        counter_stats_dict = feature_matrices.get('counter_matrix', {})
 
-    return None
+        for champ, idx in self.champ_to_idx.items():
+            ap_ratios[idx, 0] = float(ap_ratio_dict.get(champ, 0.5))
+            ap_variances[idx, 0] = float(ap_variance_dict.get(champ, 0.0))
+            for role_idx, role in enumerate(self.roles):
+                role_freqs[idx, role_idx] = float(role_freq_dict.get(champ, {}).get(role, 0.0))
 
-def predict_match(blue_team, red_team):
-    """
-    Translate team lineups into model features, load Wide & Deep weights, and output win probabilities.
-    """
-    model_path = os.path.join(SCRIPT_DIR, 'model_nn.pth')
-    meta_path = os.path.join(SCRIPT_DIR, 'model_nn_metadata.json')
+        for champ_blue, idx_blue in self.champ_to_idx.items():
+            for champ_red, idx_red in self.champ_to_idx.items():
+                flat_idx = idx_blue * stride + idx_red
+                top_counters[flat_idx, 0] = float(counter_stats_dict.get(f"top:{champ_blue}_vs_{champ_red}", 0.0))
+                mid_counters[flat_idx, 0] = float(counter_stats_dict.get(f"mid:{champ_blue}_vs_{champ_red}", 0.0))
+                supp_counters[flat_idx, 0] = float(counter_stats_dict.get(f"support:{champ_blue}_vs_{champ_red}", 0.0))
 
-    if not os.path.exists(model_path) or not os.path.exists(meta_path):
-        print("Error: PyTorch Wide & Deep model or metadata not found. Please train the model first.")
-        return
+        feature_tensors = {
+            'ap_ratios': torch.tensor(ap_ratios, dtype=torch.float32).to(self.device),
+            'ap_variances': torch.tensor(ap_variances, dtype=torch.float32).to(self.device),
+            'role_freqs': torch.tensor(role_freqs, dtype=torch.float32).to(self.device),
+            'top_counters': torch.tensor(top_counters, dtype=torch.float32).to(self.device),
+            'mid_counters': torch.tensor(mid_counters, dtype=torch.float32).to(self.device),
+            'supp_counters': torch.tensor(supp_counters, dtype=torch.float32).to(self.device)
+        }
 
-    with open(meta_path, 'r') as f:
-        meta = json.load(f)
+        self.model = WideAndDeepDraftNN(
+            num_champs=self.num_champs,
+            feature_tensors=feature_tensors,
+            embedding_dim=meta.get('embedding_dim', EMBEDDING_DIM)
+        ).to(self.device)
 
-    champion_names = meta['champion_names']
-    champ_to_idx = meta['champ_to_idx']
-    embedding_dim = meta.get('embedding_dim', 16)
-    num_heads = meta.get('num_heads', 2)
-    scaler_dict = meta.get('feature_scaler')
-    num_champs = len(champion_names)
+        if os.path.exists(MODEL_WEIGHTS_PATH):
+            self.model.load_state_dict(torch.load(MODEL_WEIGHTS_PATH, map_location=self.device))
+        self.model.eval()
 
-    if scaler_dict:
-        feature_mean = np.array(scaler_dict['mean'], dtype=np.float32)
-        feature_std = np.array(scaler_dict['std'], dtype=np.float32)
-    else:
-        feature_mean, feature_std = np.zeros((1, 32), dtype=np.float32), np.ones((1, 32), dtype=np.float32)
+    def process_team(self, team):
+        names = [team.get(r, '') for r in self.roles]
+        idxs = [self.champ_to_idx.get(c, self.num_champs) for c in names]
+        return names, idxs
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = WideAndDeepDraftNN(num_champs=num_champs, embedding_dim=embedding_dim, num_heads=num_heads, num_extra_features=32)
-    model.load_state_dict(torch.load(model_path, map_location=device))
-    model.to(device)
-    model.eval()
+    def run_inference(self, deep_indices):
+        d_tensor = torch.tensor(deep_indices, dtype=torch.long, device=self.device)
+        with torch.no_grad():
+            return self.model(d_tensor).squeeze(-1).cpu().numpy()
 
-    blue_team = {k.lower(): v for k, v in blue_team.items()}
-    red_team = {k.lower(): v for k, v in red_team.items()}
-    roles = ['top', 'jungle', 'mid', 'bot', 'support']
+    def predict(self, blue_team, red_team):
+        b_team = {k.lower(): v for k, v in blue_team.items()}
+        r_team = {k.lower(): v for k, v in red_team.items()}
 
-    X_deep = np.full(10, num_champs, dtype=np.int64)
+        _, b_idxs = self.process_team(b_team)
+        _, r_idxs = self.process_team(r_team)
 
-    teams_to_process = [
-        ("Blue Team", blue_team, 0),
-        ("Red Team", red_team, 5)
-    ]
+        prob = float(self.run_inference([b_idxs + r_idxs])[0])
+        return {
+            "probability": prob,
+            "blue_roster": {r: b_team.get(r) or "Empty" for r in self.roles},
+            "red_roster": {r: r_team.get(r) or "Empty" for r in self.roles}
+        }
 
-    for side_name, team_dict, offset in teams_to_process:
-        print(f"\n{side_name}:")
-        for r_idx, role in enumerate(roles):
-            champ_name = team_dict.get(role)
-            champ_idx = get_champion_by_name(champ_name, champ_to_idx) if champ_name else None
+    def recommend(self, blue_team, red_team, user_side, user_role, candidates):
+        user_side, user_role = user_side.lower(), user_role.lower()
+        target_idx = self.roles.index(user_role)
+        _, b_idxs = self.process_team({k.lower(): v for k, v in blue_team.items()})
+        _, r_idxs = self.process_team({k.lower(): v for k, v in red_team.items()})
 
-            if champ_idx is not None:
-                X_deep[offset + r_idx] = champ_idx
-                print(f"  {role.upper():7s}: {champion_names[champ_idx]}")
-            else:
-                print(f"  {role.upper():7s}: Warning: '{champ_name}' not found in model.")
+        base_deep = b_idxs + r_idxs
+        slot = target_idx if user_side == 'blue' else 5 + target_idx
 
-    blue_champs = [blue_team.get(r, '') for r in roles]
-    red_champs = [red_team.get(r, '') for r in roles]
-    feature_matrices = load_feature_matrices()
-    raw_feats = extract_draft_features(blue_champs, red_champs, feature_matrices).reshape(1, -1)
-    norm_feats = (raw_feats - feature_mean) / feature_std
+        valid_candidates = [c for c in candidates if c in self.champ_to_idx]
+        if not valid_candidates:
+            return {"recommendations": []}
 
-    d_tensor = torch.tensor(X_deep, dtype=torch.long).unsqueeze(0).to(device)
-    f_tensor = torch.tensor(norm_feats, dtype=torch.float32).to(device)
+        num_cands = len(valid_candidates)
+        batch_deep = np.tile(base_deep, (num_cands, 1))
 
-    with torch.no_grad():
-        win_prob_blue = model(d_tensor, f_tensor).item()
+        for i, cand in enumerate(valid_candidates):
+            batch_deep[i, slot] = self.champ_to_idx[cand]
 
-    print(f"\n=================== MATCH PREDICTION ===================")
-    print(f"Blue Team Win Probability : {win_prob_blue:.2%}")
-    print(f"Red Team Win Probability  : {(1.0 - win_prob_blue):.2%}")
-    print(f"Predicted Winner          : {'BLUE WIN' if win_prob_blue > 0.5 else 'RED WIN'}")
-    print(f"=======================================================")
+        probs = self.run_inference(batch_deep)
+        baseline = float(self.run_inference([base_deep])[0])
+        user_baseline = baseline if user_side == 'blue' else 1.0 - baseline
 
-if __name__ == "__main__":
-    blue_sample = {
-        'top': 'Sona',
-        'jungle': 'Gwen',
-        'mid': 'Soraka',
-        'bot': 'Senna',
-        'support': 'Taric'
-    }
-    red_sample = {
-        'top': 'Yuumi',
-        'jungle': 'Zed',
-        'mid': 'Darius',
-        'bot': 'Lux',
-        'support': 'Malphite'
-    }
-    predict_match(blue_sample, red_sample)
+        recs = [
+            {"name": cand, "win_rate": float(probs[i]) if user_side == 'blue' else 1.0 - float(probs[i])}
+            for i, cand in enumerate(valid_candidates)
+        ]
+        recs.sort(key=lambda x: x['win_rate'], reverse=True)
+        return {"baseline": user_baseline, "recommendations": recs[:10]}

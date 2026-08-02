@@ -1,8 +1,5 @@
-league_data.db
+.venv/
 __pycache__/
 *.pyc
-.venv/
-env/
-*.npz
-FFN/dataset_cache.npz
-.DS_Store
+league_data.db
+feature_matrices.json

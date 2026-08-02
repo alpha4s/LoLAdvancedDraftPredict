@@ -1,14 +1,18 @@
 import sqlite3, time, json
 from collections import deque
 from riotwatcher import LolWatcher, ApiError
+from config import DB_PATH, CHAMPIONS_PATH, VALID_RIOT_ROLES
 
-api_key, routing_region, platform_region = '', '', ''
+api_key = ''
+routing_region = ''
+platform_region = ''
+TARGET_PATCH = ''
 watcher = LolWatcher(api_key)
-min_matches, min_apps = 70000, 5
-VALID_ROLES = {'TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY'}
+min_matches, min_apps = 700000, 100
+VALID_ROLES = VALID_RIOT_ROLES
 
 def load_champions():
-    with open('champions.json') as f:
+    with open(CHAMPIONS_PATH) as f:
         return json.load(f)
 
 def get_team_by_roles(participants, team_id):
@@ -37,7 +41,7 @@ def get_coverage(cursor, champions):
     return len(champs), met
 
 def init_db():
-    conn = sqlite3.connect('league_data.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS matches (
         match_id TEXT PRIMARY KEY, game_version TEXT, winning_team TEXT,
@@ -45,104 +49,166 @@ def init_db():
         red_top TEXT, red_jungle TEXT, red_mid TEXT, red_bot TEXT, red_support TEXT)''')
     c.execute('CREATE TABLE IF NOT EXISTS processed_players (puuid TEXT PRIMARY KEY)')
     
-    c.execute('PRAGMA table_info(matches)')
-    existing_cols = {row[1] for row in c.fetchall()}
-    damage_cols = [
+    c.execute("PRAGMA table_info(matches)")
+    existing_cols = [col[1] for col in c.fetchall()]
+    
+    all_target_cols = [
+        'match_id', 'game_version', 'winning_team',
+        'blue_top', 'blue_jungle', 'blue_mid', 'blue_bot', 'blue_support',
+        'red_top', 'red_jungle', 'red_mid', 'red_bot', 'red_support',
         'blue_top_phys', 'blue_top_magic', 'blue_jungle_phys', 'blue_jungle_magic',
         'blue_mid_phys', 'blue_mid_magic', 'blue_bot_phys', 'blue_bot_magic',
-        'blue_supp_phys', 'blue_supp_magic', 'red_top_phys', 'red_top_magic',
-        'red_jungle_phys', 'red_jungle_magic', 'red_mid_phys', 'red_mid_magic',
-        'red_bot_phys', 'red_bot_magic', 'red_supp_phys', 'red_supp_magic'
+        'blue_supp_phys', 'blue_supp_magic',
+        'red_top_phys', 'red_top_magic', 'red_jungle_phys', 'red_jungle_magic',
+        'red_mid_phys', 'red_mid_magic', 'red_bot_phys', 'red_bot_magic',
+        'red_supp_phys', 'red_supp_magic'
     ]
-    for col in damage_cols:
+    
+    for col in all_target_cols:
         if col not in existing_cols:
-            c.execute(f'ALTER TABLE matches ADD COLUMN {col} INT DEFAULT 0')
+            c.execute(f"ALTER TABLE matches ADD COLUMN {col} INTEGER DEFAULT 0")
+            
     conn.commit()
-    return conn
+    conn.close()
 
-def get_next_players(state):
-    tiers, divs = ['PLATINUM', 'EMERALD', 'DIAMOND'], ['I', 'II', 'III', 'IV']
-    while state['tier'] < len(tiers):
-        t, d, p = tiers[state['tier']], divs[state['div']], state['page']
+def main():
+    init_db()
+    champions = load_champions()
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT COUNT(*) FROM matches')
+    match_count = cursor.fetchone()[0]
+    total, met = get_coverage(cursor, champions)
+    print(f"[START] Current DB: {match_count}/{min_matches} matches | Coverage: {met}/{total} champs met min {min_apps} games")
+
+    cursor.execute('SELECT puuid FROM processed_players')
+    seen_puuids = set(row[0] for row in cursor.fetchall())
+
+    player_queue = deque()
+
+    print("[SEED] Fetching fresh seed players from Platinum, Emerald, and Diamond leagues...")
+    try:
+        for tier in ['PLATINUM', 'EMERALD', 'DIAMOND']:
+            for division in ['I', 'II', 'III', 'IV']:
+                entries = watcher.league.entries(platform_region, 'RANKED_SOLO_5x5', tier, division, page=1)
+                for entry in entries[:10]:
+                    puuid = entry.get('puuid')
+                    if not puuid and 'summonerId' in entry:
+                        summ = watcher.summoner.by_id(platform_region, entry['summonerId'])
+                        puuid = summ.get('puuid')
+                    if puuid and puuid not in seen_puuids:
+                        player_queue.append(puuid)
+                        seen_puuids.add(puuid)
+        print(f"[SEED] Queued {len(player_queue)} fresh seed players from Plat, Emerald, and Diamond.")
+    except Exception as e:
+        print(f"[SEED ERROR] {e}")
+
+    if not player_queue:
+        cursor.execute('SELECT puuid FROM processed_players ORDER BY RANDOM() LIMIT 200')
+        for row in cursor.fetchall():
+            player_queue.append(row[0])
+        print(f"[RESUME] Loaded {len(player_queue)} active PUUIDs from DB.")
+
+    global TARGET_PATCH
+    try:
+        latest_ver = watcher.data_dragon.versions_all()[0]
+        TARGET_PATCH = '.'.join(latest_ver.split('.')[:2])
+        print(f"[PATCH] Auto-detected current live patch: {TARGET_PATCH} (Full version: {latest_ver})")
+    except Exception as e:
+        print(f"[PATCH] Could not auto-detect patch ({e}), using fallback: '{TARGET_PATCH}'")
+
+    patch_start_time = int(time.time()) - (3 * 86400)
+
+    while player_queue and match_count < min_matches:
+        curr_puuid = player_queue.popleft()
+
         try:
-            entries = watcher.league.entries(platform_region, 'RANKED_SOLO_5x5', t, d, page=p)
-            if not entries:
-                state['page'], state['div'] = 1, state['div'] + 1
-                if state['div'] >= 4:
-                    state['div'], state['tier'] = 0, state['tier'] + 1
-                continue
-            state['page'] += 1
-            return entries
-        except ApiError as e:
-            if e.response.status_code in [401, 403, 429]: raise e
-            state['page'] += 1
-    return []
-
-def crawl():
-    conn = init_db()
-    c = conn.cursor()
-    champs = load_champions()
-    c.execute('SELECT COUNT(*) FROM matches')
-    matches = c.fetchone()[0]
-    total, met = get_coverage(c, champs)
-    print(f"Initial Matches: {matches} | Coverage: {met}/{total} ({met/total:.1%})")
-
-    state = {'tier': 0, 'div': 0, 'page': 1}
-    queue = deque()
-
-    while matches < min_matches or met < total:
-        if not queue:
-            try:
-                entries = get_next_players(state)
-                if not entries:
-                    print("No more player entries available.")
-                    break
-                queue.extend(entries)
-            except ApiError as e:
-                if e.response.status_code == 429:
-                    time.sleep(int(e.response.headers.get('Retry-After', 60)))
-                continue
-
-        entry = queue.popleft()
-        puuid = entry['puuid']
-        if c.execute('SELECT 1 FROM processed_players WHERE puuid = ?', (puuid,)).fetchone():
+            match_ids = watcher.match.matchlist_by_puuid(routing_region, curr_puuid, count=15, type='ranked', start_time=patch_start_time)
+            time.sleep(0.05)
+        except ApiError as err:
+            if err.response.status_code == 429:
+                print("[RATE LIMIT] Waiting 120s for Riot API rate limit reset...")
+                time.sleep(120)
+                player_queue.appendleft(curr_puuid)
+            continue
+        except Exception as err:
+            print(f"[NETWORK ERROR] {err} - Retrying in 5s...")
+            time.sleep(5)
+            player_queue.appendleft(curr_puuid)
             continue
 
-        try:
-            for m_id in watcher.match.matchlist_by_puuid(routing_region, puuid, count=20, queue=420):
-                if matches >= min_matches and met >= total: break
-                if c.execute('SELECT 1 FROM matches WHERE match_id = ?', (m_id,)).fetchone():
-                    continue
+        for m_id in match_ids:
+            if match_count >= min_matches: break
 
-                match = watcher.match.by_id(routing_region, m_id)
-                info = match.get('info', {})
-                if info.get('queueId') != 420 or info.get('gameDuration', 0) < 900:
-                    continue
+            cursor.execute('SELECT 1 FROM matches WHERE match_id = ?', (m_id,))
+            if cursor.fetchone(): continue
 
-                b_team, b_dmgs = get_team_by_roles(info.get('participants', []), 100)
-                r_team, r_dmgs = get_team_by_roles(info.get('participants', []), 200)
-                if not b_team or not r_team:
-                    continue  # Skip match if role assignment is ambiguous
+            try:
+                mdata = watcher.match.by_id(routing_region, m_id)
+                time.sleep(0.05)
+            except ApiError as err:
+                if err.response.status_code == 429:
+                    print("[RATE LIMIT] Waiting 120s for Riot API rate limit reset...")
+                    time.sleep(120)
+                continue
+            except Exception as err:
+                print(f"[NETWORK ERROR] {err} - Skipping match...")
+                time.sleep(2)
+                continue
 
-                winner = "BLUE_WIN" if next(t for t in info.get('teams', []) if t['teamId'] == 100)['win'] else "RED_WIN"
-                game_version = info.get('gameVersion', '')
+            info = mdata.get('info', {})
+            if info.get('gameMode') != 'CLASSICAL' and info.get('gameQueueConfigId') not in [420, 440]:
+                if info.get('queueId') not in [420, 440]: continue
 
-                sql = '''INSERT OR IGNORE INTO matches VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'''
-                c.execute(sql, (m_id, game_version, winner, *b_team, *r_team, *b_dmgs, *r_dmgs))
-                matches += 1
-                conn.commit()
-                total, met = get_coverage(c, champs)
-                print(f"[{matches}/{min_matches}] Saved {m_id} | Patch: {game_version} | Coverage: {met}/{total} ({met/total:.1%})")
+            game_version = info.get('gameVersion', '')
+            if TARGET_PATCH and not game_version.startswith(TARGET_PATCH):
+                continue
 
-            c.execute('INSERT OR IGNORE INTO processed_players VALUES (?)', (puuid,))
+            participants = info.get('participants', [])
+            b_champs, b_dmgs = get_team_by_roles(participants, 100)
+            r_champs, r_dmgs = get_team_by_roles(participants, 200)
+
+            if not b_champs or not r_champs: continue
+
+            teams = info.get('teams', [])
+            blue_win = teams[0].get('win', False) if teams else False
+            winning_team = 'BLUE_WIN' if blue_win else 'RED_WIN'
+
+            row_data = [m_id, game_version, winning_team] + b_champs + r_champs + b_dmgs + r_dmgs
+            
+            sql_insert = '''INSERT OR IGNORE INTO matches (
+                match_id, game_version, winning_team,
+                blue_top, blue_jungle, blue_mid, blue_bot, blue_support,
+                red_top, red_jungle, red_mid, red_bot, red_support,
+                blue_top_phys, blue_top_magic, blue_jungle_phys, blue_jungle_magic,
+                blue_mid_phys, blue_mid_magic, blue_bot_phys, blue_bot_magic,
+                blue_supp_phys, blue_supp_magic,
+                red_top_phys, red_top_magic, red_jungle_phys, red_jungle_magic,
+                red_mid_phys, red_mid_magic, red_bot_phys, red_bot_magic,
+                red_supp_phys, red_supp_magic
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'''
+            
+            cursor.execute(sql_insert, row_data)
             conn.commit()
-        except ApiError as e:
-            if e.response.status_code == 429:
-                queue.appendleft(entry)
-                time.sleep(int(e.response.headers.get('Retry-After', 60)))
+
+            match_count += 1
+            print(f"[{match_count}/{min_matches}] Saved {m_id} | Patch: {game_version}")
+
+            for p in participants:
+                p_puuid = p.get('puuid')
+                if p_puuid and p_puuid not in seen_puuids:
+                    seen_puuids.add(p_puuid)
+                    player_queue.append(p_puuid)
+                    cursor.execute('INSERT OR IGNORE INTO processed_players (puuid) VALUES (?)', (p_puuid,))
+            conn.commit()
+
+            if match_count % 50 == 0:
+                total, met = get_coverage(cursor, champions)
+                print(f"[PROGRESS] Matches: {match_count}/{min_matches} | Coverage: {met}/{total} champs met min {min_apps} games")
 
     conn.close()
-    print(f"Completed. Matches: {matches} | Coverage: {met}/{total}")
+    print("[COMPLETE] Data crawler finished successfully.")
 
-if __name__ == "__main__":
-    crawl()
+if __name__ == '__main__':
+    main()

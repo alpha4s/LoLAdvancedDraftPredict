@@ -1,243 +1,252 @@
-import os, json, sqlite3, torch, argparse, sys, pandas as pd, numpy as np, torch.nn as nn, torch.optim as optim
+import copy
+import os, sys, json, sqlite3, torch, pandas as pd, numpy as np
+import torch.nn as nn
+import torch.optim as optim
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(SCRIPT_DIR)
-sys.path.append(ROOT_DIR)
+if ROOT_DIR not in sys.path:
+    sys.path.append(ROOT_DIR)
+
+from config import DB_PATH, CHAMPIONS_PATH, MODEL_WEIGHTS_PATH, MODEL_META_PATH, ONNX_MODEL_PATH, ROLES, EMBEDDING_DIM
 from model import WideAndDeepDraftNN
-from feature_engineering import build_feature_matrices, extract_draft_features
+from feature_engineering import build_feature_matrices
 
-def load_data_from_db():
-    conn = sqlite3.connect(os.path.join(ROOT_DIR, 'league_data.db'))
-    df = pd.read_sql_query("SELECT * FROM matches", conn)
-    conn.close()
-    return df
+np.random.seed(42)
+torch.manual_seed(42)
 
-def get_champion_metadata():
-    with open(os.path.join(ROOT_DIR, 'champions.json'), 'r') as f:
-        data = json.load(f)
-    names = sorted(list(data.values())) if isinstance(data, dict) else sorted(list(data))
-    return names, {name: i for i, name in enumerate(names)}
+print("=== TRAINING WIDE-AND-DEEP DRAFT MODEL ===")
 
-def vectorize_data(df, name_to_idx, feature_matrices, feature_scaler=None, augment_snake_draft=True):
-    num_champs = len(name_to_idx)
-    roles = ['top', 'jungle', 'mid', 'bot', 'support']
-    snake_stages = [
-        ([0], []), ([0], [0, 1]), ([0, 1, 2], [0, 1]),
-        ([0, 1, 2], [0, 1, 2, 3]), ([0, 1, 2, 3, 4], [0, 1, 2, 3]),
-        ([0, 1, 2, 3, 4], [0, 1, 2, 3, 4])
-    ]
-    stage_weights = np.array([0.05, 0.1, 0.2, 0.3, 0.5, 1.0], dtype=np.float32)
+# 1. Load data directly from SQLite database
+conn = sqlite3.connect(DB_PATH)
+df = pd.read_sql_query(
+    "SELECT * FROM matches WHERE game_version LIKE ?",
+    conn,
+    params=("16%",)
+)
+conn.close()
 
-    blue_names = df[[f'blue_{r}' for r in roles]].to_numpy()
-    red_names = df[[f'red_{r}' for r in roles]].to_numpy()
-    blue_mat = np.array([[name_to_idx.get(v, num_champs) for v in r] for r in blue_names], dtype=np.int64)
-    red_mat = np.array([[name_to_idx.get(v, num_champs) for v in r] for r in red_names], dtype=np.int64)
-    wins = (df['winning_team'].to_numpy() == 'BLUE_WIN').astype(np.float32)
+# 2. Champion metadata mapping
+with open(CHAMPIONS_PATH, 'r') as f:
+    champs = sorted(json.load(f))
+champ_to_idx = {c: i for i, c in enumerate(champs)}
+num_champs = len(champs)
 
-    num_matches = len(df)
-    stages_to_use = list(enumerate(snake_stages)) if augment_snake_draft else [(5, snake_stages[-1])]
-    total_samples = num_matches * len(stages_to_use)
+# 3. Train / Val Split (80 / 20)
+df_train, df_val = train_test_split(df, test_size=0.2, random_state=42)
+feature_matrices = build_feature_matrices(df_train)
 
-    # Extract full Turn 6 raw features to establish non-distorted baseline scaler
-    full_feats = np.array([extract_draft_features(b, r, feature_matrices) for b, r in zip(blue_names, red_names)], dtype=np.float32)
-    if feature_scaler is None:
-        mean = np.mean(full_feats, axis=0, keepdims=True)
-        std = np.std(full_feats, axis=0, keepdims=True) + 1e-6
-        feature_scaler = (mean, std)
-    else:
-        mean, std = feature_scaler
+# 4. Convert the precomputed champion statistics into model lookup tables
+ap_ratios = np.zeros((num_champs + 1, 1), dtype=np.float32)
+ap_variances = np.zeros((num_champs + 1, 1), dtype=np.float32)
+role_freqs = np.zeros((num_champs + 1, 5), dtype=np.float32)
 
-    raw_feats_stages = []
-    for s_idx, (b_act, r_act) in stages_to_use:
-        b_p = np.where(np.isin(np.arange(5), b_act)[None, :], blue_names, '')
-        r_p = np.where(np.isin(np.arange(5), r_act)[None, :], red_names, '')
-        stage_feats = np.array([extract_draft_features(b, r, feature_matrices) for b, r in zip(b_p, r_p)], dtype=np.float32)
-        norm_stage = (stage_feats - mean) / std
+stride = num_champs + 1
+top_counters = np.zeros((stride * stride, 1), dtype=np.float32)
+mid_counters = np.zeros((stride * stride, 1), dtype=np.float32)
+supp_counters = np.zeros((stride * stride, 1), dtype=np.float32)
 
-        # Zero-mask per-slot features for unpicked/empty slots and team differentials on partial turns
-        slot_mask = np.ones((len(df), 30), dtype=np.float32)
-        for i in range(5):
-            if i not in b_act:
-                slot_mask[:, i * 3:(i + 1) * 3] = 0.0
-            if i not in r_act:
-                slot_mask[:, 15 + i * 3:15 + (i + 1) * 3] = 0.0
+ap_ratio_dict = feature_matrices.get('champ_ap_ratios', {})
+ap_variance_dict = feature_matrices.get('champ_ap_variances', {})
+role_freq_dict = feature_matrices.get('role_freqs', {})
+counter_stats_dict = feature_matrices.get('counter_matrix', {})
 
-        norm_stage[:, :30] *= slot_mask
-        if s_idx < 5:
-            norm_stage[:, 30:] *= 0.0
+for champ, idx in champ_to_idx.items():
+    ap_ratios[idx, 0] = float(ap_ratio_dict.get(champ, 0.5))
+    ap_variances[idx, 0] = float(ap_variance_dict.get(champ, 0.0))
+    for role_idx, role in enumerate(ROLES):
+        role_freqs[idx, role_idx] = float(role_freq_dict.get(champ, {}).get(role, 0.0))
 
-        raw_feats_stages.append(norm_stage)
+for champ_blue, idx_blue in champ_to_idx.items():
+    for champ_red, idx_red in champ_to_idx.items():
+        flat_idx = idx_blue * stride + idx_red
+        top_counters[flat_idx, 0] = float(counter_stats_dict.get(f"top:{champ_blue}_vs_{champ_red}", 0.0))
+        mid_counters[flat_idx, 0] = float(counter_stats_dict.get(f"mid:{champ_blue}_vs_{champ_red}", 0.0))
+        supp_counters[flat_idx, 0] = float(counter_stats_dict.get(f"support:{champ_blue}_vs_{champ_red}", 0.0))
 
-    X_feats = np.vstack(raw_feats_stages)
-    X_deep = np.full((total_samples, 10), num_champs, dtype=np.int64)
-    y_out = np.empty(total_samples, dtype=np.float32)
-    w_out = np.empty(total_samples, dtype=np.float32)
+feature_tensors = {
+    'ap_ratios': torch.tensor(ap_ratios, dtype=torch.float32),
+    'ap_variances': torch.tensor(ap_variances, dtype=torch.float32),
+    'role_freqs': torch.tensor(role_freqs, dtype=torch.float32),
+    'top_counters': torch.tensor(top_counters, dtype=torch.float32),
+    'mid_counters': torch.tensor(mid_counters, dtype=torch.float32),
+    'supp_counters': torch.tensor(supp_counters, dtype=torch.float32)
+}
 
-    for idx, (s_idx, (b_act, r_act)) in enumerate(stages_to_use):
-        slc = slice(idx * num_matches, (idx + 1) * num_matches)
-        y_out[slc], w_out[slc] = wins, stage_weights[s_idx]
-        for r in b_act:
-            X_deep[slc, r] = blue_mat[:, r]
-        for r in r_act:
-            X_deep[slc, 5 + r] = red_mat[:, r]
+from torch.utils.data import TensorDataset, DataLoader
 
-    return X_deep, X_feats, y_out, w_out, feature_scaler
+def extract_champion_ids(df_subset, augment_partial=False):
+    X_deep_list, y_list = [], []
+    winning_teams = df_subset['winning_team'].to_numpy()
 
-def train_and_evaluate(X_tr, F_tr, y_tr, w_tr, X_val, F_val, y_val, w_val, num_champs, embed_dim, num_heads, alpha, device, epochs=100, patience=10):
-    d_tr, f_tr = torch.tensor(X_tr, dtype=torch.long, device=device), torch.tensor(F_tr, dtype=torch.float32, device=device)
-    y_tr, w_tr = torch.tensor(y_tr, dtype=torch.float32, device=device).unsqueeze(1), torch.tensor(w_tr, dtype=torch.float32, device=device).unsqueeze(1)
-    d_val, f_val = torch.tensor(X_val, dtype=torch.long, device=device), torch.tensor(F_val, dtype=torch.float32, device=device)
-    y_val_t = torch.tensor(y_val, dtype=torch.float32, device=device).unsqueeze(1)
+    for i, (_, row) in enumerate(df_subset.iterrows()):
+        b_champs = [row.get(f'blue_{r}', '') or '' for r in ROLES]
+        r_champs = [row.get(f'red_{r}', '') or '' for r in ROLES]
 
-    model = WideAndDeepDraftNN(num_champs, embed_dim, num_heads, num_extra_features=F_tr.shape[1]).to(device)
-    criterion = nn.BCELoss(reduction='none')
-    optimizer = optim.Adam(model.parameters(), lr=0.0003, weight_decay=alpha)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3, min_lr=1e-5)
+        b_idxs = [champ_to_idx.get(c, num_champs) for c in b_champs]
+        r_idxs = [champ_to_idx.get(c, num_champs) for c in r_champs]
+        target = 1.0 if winning_teams[i] == 'BLUE_WIN' else 0.0
 
-    best_val_loss, best_state, patience_cnt, best_epoch = float('inf'), None, 0, 0
-    N_tr = d_tr.size(0)
-    N_val_matches = len(y_val) // 6 if len(y_val) % 6 == 0 else len(y_val)
-    t6_slc = slice(5 * N_val_matches, 6 * N_val_matches) if len(y_val) % 6 == 0 else slice(0, len(y_val))
+        # Always include the complete draft.
+        X_deep_list.append(b_idxs + r_idxs)
+        y_list.append(target)
 
-    for epoch in range(1, epochs + 1):
-        model.train()
-        perm = torch.randperm(N_tr, device=device)
-        total_loss, total_w = 0.0, 0.0
-        for i in range(0, N_tr, 2048):
-            idx = perm[i:i + 2048]
-            optimizer.zero_grad()
-            loss = (criterion(model(d_tr[idx], f_tr[idx]), y_tr[idx]) * w_tr[idx]).sum()
-            (loss / w_tr[idx].sum()).backward()
-            optimizer.step()
-            total_loss += loss.item()
-            total_w += w_tr[idx].sum().item()
+        # Sometimes include a partially filled draft for the live drafting UI.
+        if augment_partial and np.random.rand() < 0.5:
+            n_b = np.random.randint(0, 6)
+            n_r = np.random.randint(0, 6)
 
-        tr_loss = total_loss / max(1.0, total_w)
-        model.eval()
-        with torch.no_grad():
-            val_loss = criterion(model(d_val[t6_slc], f_val[t6_slc]), y_val_t[t6_slc]).mean().item()
+            b_partial = list(b_idxs)
+            r_partial = list(r_idxs)
 
-        scheduler.step(val_loss)
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            best_state = model.state_dict().copy()
-            patience_cnt = 0
-            best_epoch = epoch
-            flag = " (Best)"
-        else:
-            patience_cnt += 1
-            flag = ""
+            # Randomly remove picks from both teams.
+            if n_b < 5:
+                mask_b = np.random.choice(5, 5 - n_b, replace=False)
+                for idx in mask_b: b_partial[idx] = num_champs
+            if n_r < 5:
+                mask_r = np.random.choice(5, 5 - n_r, replace=False)
+                for idx in mask_r: r_partial[idx] = num_champs
 
-        if epoch % 5 == 0 or epoch == 1 or patience_cnt >= patience:
-            print(f"  Epoch {epoch:3d}/{epochs} | Train Loss: {tr_loss:.4f} | Turn 6 Val Loss: {val_loss:.4f}{flag}")
+            X_deep_list.append(b_partial + r_partial)
+            y_list.append(target)
 
-        if patience_cnt >= patience:
-            print(f"  Early stopping at Epoch {epoch}. Best Checkpoint: Epoch {best_epoch} (Val Loss: {best_val_loss:.4f})")
-            break
+    return np.array(X_deep_list, dtype=np.int64), np.array(y_list, dtype=np.float32)
 
-    if best_state:
-        model.load_state_dict(best_state)
+print("Extracting champion IDs and partial-draft training examples...")
+x_train_raw, y_train_raw = extract_champion_ids(df_train, augment_partial=True)
+x_val_raw, y_val_raw = extract_champion_ids(df_val, augment_partial=False)
+baseline_acc = max(float(y_val_raw.mean()), 1.0 - float(y_val_raw.mean()))
+print(f"Majority-class baseline accuracy: {baseline_acc:.2%}")
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f"Device: {device} | Train Samples (Augmented): {len(y_train_raw)} | Val Samples: {len(y_val_raw)}")
+
+device_feature_tensors = {key: tensor.to(device) for key, tensor in feature_tensors.items()}
+
+# 5. Initialize the model and training loop
+epochs = 30
+model = WideAndDeepDraftNN(num_champs=num_champs, feature_tensors=device_feature_tensors, embedding_dim=EMBEDDING_DIM).to(device)
+criterion = nn.BCELoss()
+optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-4)
+
+x_train_tensor = torch.tensor(x_train_raw, dtype=torch.long)
+y_train_tensor = torch.tensor(y_train_raw, dtype=torch.float32).unsqueeze(1)
+
+train_dataset = TensorDataset(x_train_tensor, y_train_tensor)
+train_loader = DataLoader(train_dataset, batch_size=2048, shuffle=True)
+
+scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
+
+x_val = torch.tensor(x_val_raw, dtype=torch.long, device=device)
+y_val = torch.tensor(y_val_raw, dtype=torch.float32, device=device).unsqueeze(1)
+
+best_val_loss = float('inf')
+best_weights = None
+
+print("\n--- Training wide-and-deep model (StepLR, gradient clipping) ---")
+for epoch in range(1, epochs + 1):
+    model.train()
+    total_train_loss = 0.0
+    for bx, by in train_loader:
+        bx, by = bx.to(device), by.to(device)
+
+        optimizer.zero_grad()
+        preds = model(bx)
+        loss = criterion(preds, by)
+        loss.backward()
+
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+
+        total_train_loss += loss.item() * bx.size(0)
+
+    scheduler.step()
+    avg_train_loss = total_train_loss / len(train_dataset)
 
     model.eval()
-    stage_scores = {}
     with torch.no_grad():
-        preds = (model(d_val, f_val).cpu().numpy() > 0.5).astype(int)
-        names = ["Turn 1 (1 Pick)", "Turn 2 (3 Picks)", "Turn 3 (5 Picks)", "Turn 4 (7 Picks)", "Turn 5 (9 Picks)", "Turn 6 (Full 5v5 Draft)"]
-        if len(y_val) % 6 == 0:
-            for s_idx, s_name in enumerate(names):
-                slc = slice(s_idx * N_val_matches, (s_idx + 1) * N_val_matches)
-                stage_scores[s_name] = accuracy_score(y_val[slc], preds[slc])
-        score = stage_scores.get("Turn 6 (Full 5v5 Draft)", accuracy_score(y_val, preds))
+        val_preds = model(x_val)
+        val_loss = criterion(val_preds, y_val).item()
+        val_acc = accuracy_score(y_val_raw, (val_preds.cpu().numpy() > 0.5).astype(int))
 
-    return model, score, stage_scores
+    if val_loss < best_val_loss:
+        best_val_loss = val_loss
+        best_weights = copy.deepcopy(model.state_dict())
 
-def save_files(model, champion_names, name_to_idx, score, stage_scores, embed_dim, num_heads, alpha, feature_scaler=None):
-    meta_path = os.path.join(SCRIPT_DIR, 'model_nn_metadata.json')
-    if os.path.exists(meta_path):
-        try:
-            with open(meta_path, 'r') as f:
-                old_meta = json.load(f)
-                old_acc = old_meta.get('accuracy', 0.0)
-                if old_acc > score:
-                    print(f"\n⚠️  Skipping save: New run accuracy ({score:.2%}) is lower than existing checkpoint ({old_acc:.2%}).")
-                    print(f"    Preserved existing best model_nn.pth ({old_acc:.2%}).")
-                    return
-        except Exception:
-            pass
+    if epoch % 5 == 0 or epoch == epochs:
+        print(f"Epoch {epoch:2d}/{epochs} | Train Loss: {avg_train_loss:.4f} | Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.2%}")
 
-    torch.save(model.state_dict(), os.path.join(SCRIPT_DIR, 'model_nn.pth'))
-    scaler_dict = {'mean': feature_scaler[0].tolist(), 'std': feature_scaler[1].tolist()} if feature_scaler else None
-    metadata = {
-        'champion_names': champion_names,
-        'champ_to_idx': name_to_idx,
-        'accuracy': score,
-        'stage_accuracies': stage_scores,
-        'model_type': 'PyTorch_WideAndDeepAttentionDraftNN',
-        'embedding_dim': embed_dim,
-        'num_heads': num_heads,
-        'feature_scaler': scaler_dict,
-        'best_hyperparameters': {'embedding_dim': embed_dim, 'num_heads': num_heads, 'alpha': alpha}
-    }
-    with open(meta_path, 'w') as f:
-        json.dump(metadata, f, indent=4)
+if best_weights is not None:
+    model.load_state_dict(best_weights)
 
-    print(f"\n🏆 New Best Model Saved! Accuracy: {score:.2%}")
-    for k, v in stage_scores.items():
-        print(f"  - {k:25s}: {v:.2%}")
+# Evaluate final validation accuracy
+model.eval()
+with torch.no_grad():
+    final_preds = (model(x_val).cpu().numpy() > 0.5).astype(int)
+    final_acc = accuracy_score(y_val_raw, final_preds)
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--tune", action="store_true")
-    parser.add_argument("--force", action="store_true")
-    parser.add_argument("--embed_dim", type=int, default=16)
-    parser.add_argument("--alpha", type=float, default=1e-2)
-    args = parser.parse_args()
+print("\n" + "="*50)
+print(f"End-to-End Wide & Deep Full Draft (10/10) Accuracy: {final_acc:.2%}")
+print("="*50)
 
-    if torch.cuda.is_available():
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
+# Evaluate accuracy at different numbers of selected champions
+print("\n--- Validation Breakdown by Draft Completeness Stage ---")
+val_stages_x, val_stages_y = extract_champion_ids(df_val, augment_partial=True)
+total_picks = (val_stages_x != num_champs).sum(axis=1)
+val_stages_x_tensor = torch.tensor(val_stages_x, dtype=torch.long, device=device)
 
-    champ_names, name_to_idx = get_champion_metadata()
-    cache_path = os.path.join(SCRIPT_DIR, 'dataset_cache.npz')
+with torch.no_grad():
+    val_stage_preds = (model(val_stages_x_tensor).cpu().numpy() > 0.5).astype(int).squeeze(-1)
 
-    if os.path.exists(cache_path) and not args.force:
-        print(f"Loading cached vectorized dataset from {cache_path}...")
-        cache = np.load(cache_path, allow_pickle=True)
-        X_tr, F_tr, y_tr, w_tr = cache['X_tr'], cache['F_tr'], cache['y_tr'], cache['w_tr']
-        X_val, F_val, y_val, w_val = cache['X_val'], cache['F_val'], cache['y_val'], cache['w_val']
-        feature_scaler = cache['feature_scaler'].item()
-    else:
-        df = load_data_from_db()
-        df_tr, df_val = train_test_split(df, test_size=0.2, random_state=42)
-        feature_matrices = build_feature_matrices(df_tr)
-        X_tr, F_tr, y_tr, w_tr, feature_scaler = vectorize_data(df_tr, name_to_idx, feature_matrices)
-        X_val, F_val, y_val, w_val, _ = vectorize_data(df_val, name_to_idx, feature_matrices, feature_scaler=feature_scaler)
-        np.savez_compressed(cache_path, X_tr=X_tr, F_tr=F_tr, y_tr=y_tr, w_tr=w_tr, X_val=X_val, F_val=F_val, y_val=y_val, w_val=w_val, feature_scaler=feature_scaler)
-        print(f"Cached vectorized dataset to {cache_path}")
+stage_ranges = [
+    ("Stage 1 (1-2 picks)", (1, 2)),
+    ("Stage 2 (3-4 picks)", (3, 4)),
+    ("Stage 3 (5-6 picks)", (5, 6)),
+    ("Stage 4 (7-8 picks)", (7, 8)),
+    ("Stage 5 (9-10 picks / Full)", (9, 10))
+]
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Device: {device} | Train: {len(y_tr)} | Val: {len(y_val)}")
-    num_champs = len(champ_names)
+for name, (low, high) in stage_ranges:
+    mask = (total_picks >= low) & (total_picks <= high)
+    if mask.sum() > 0:
+        acc = accuracy_score(val_stages_y[mask], val_stage_preds[mask])
+        print(f"  {name:30s} : {acc:.2%} ({mask.sum()} samples)")
 
-    if args.tune:
-        configs = [(8, 1), (8, 2), (8, 4), (16, 2), (16, 4)]
-        best_acc, best_config, best_model, best_stages = 0.0, {}, None, {}
-        for embed_dim, num_heads in configs:
-            print(f"\n--- Testing EmbedDim={embed_dim}, Heads={num_heads}, Alpha={args.alpha} ---")
-            m, s, st = train_and_evaluate(X_tr, F_tr, y_tr, w_tr, X_val, F_val, y_val, w_val, num_champs, embed_dim, num_heads, args.alpha, device, patience=10)
-            t6_acc = st.get("Turn 6 (Full 5v5 Draft)", s)
-            print(f" -> Turn 6 Val Accuracy: {t6_acc:.2%} | Blended Acc: {s:.2%}")
-            if s > best_acc:
-                best_acc = s
-                best_config = {'embedding_dim': embed_dim, 'num_heads': num_heads, 'alpha': args.alpha}
-                best_model = m
-                best_stages = st
-        save_files(best_model, champ_names, name_to_idx, best_acc, best_stages, best_config['embedding_dim'], best_config['num_heads'], best_config['alpha'], feature_scaler)
-    else:
-        m, s, st = train_and_evaluate(X_tr, F_tr, y_tr, w_tr, X_val, F_val, y_val, w_val, num_champs, args.embed_dim, 2, args.alpha, device, patience=10)
-        save_files(m, champ_names, name_to_idx, s, st, args.embed_dim, 2, args.alpha, feature_scaler)
+# Save model weights and metadata
+torch.save(model.state_dict(), MODEL_WEIGHTS_PATH)
 
-if __name__ == "__main__":
-    main()
+metadata = {
+    'champion_names': champs,
+    'champ_to_idx': champ_to_idx,
+    'accuracy': float(final_acc),
+    'model_type': 'PyTorch_WideAndDeepDraftNN_EndToEnd',
+    'embedding_dim': EMBEDDING_DIM
+}
+with open(MODEL_META_PATH, 'w') as f:
+    json.dump(metadata, f, indent=4)
+
+# Export the model and its lookup tables for browser inference
+print(f"Exporting ONNX model to {ONNX_MODEL_PATH}...")
+dummy_deep = torch.zeros((1, 10), dtype=torch.long, device=device)
+
+import warnings
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    torch.onnx.export(
+        model,
+        dummy_deep,
+        ONNX_MODEL_PATH,
+        export_params=True,
+        opset_version=16,
+        input_names=['x_deep'],
+        output_names=['output'],
+        dynamic_axes={
+            'x_deep': {0: 'batch_size'},
+            'output': {0: 'batch_size'}
+        },
+        dynamo=False
+    )
+
+print(f"Successfully exported PyTorch ONNX model ({os.path.getsize(ONNX_MODEL_PATH)/1024:.1f} KB) to ONNX_MODEL_PATH")

@@ -37,18 +37,6 @@ button,
 
 .hidden { display: none !important; }
 
-.model-status {
-    border: 1px solid #2b3143;
-    border-radius: 6px;
-    margin-bottom: 20px;
-    padding: 9px 12px;
-    font-size: 0.86rem;
-}
-
-.model-status.loading { color: #c9a44a; }
-.model-status.ready { color: #34d399; border-color: rgba(52, 211, 153, 0.35); }
-.model-status.error { color: #fca5a5; border-color: rgba(248, 113, 113, 0.35); }
-
 #pool-search,
 .champ-badge,
 .target-btn,

@@ -28,15 +28,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
             await inferenceEngine.init(version);
             modelReady = true;
-            ui.setStatus('Prediction model ready', 'ready');
             onDraftChange();
         } catch (modelError) {
             console.error('Model initialization failed:', modelError);
-            ui.setStatus(modelError.message || 'Prediction model unavailable.', 'error');
         }
     } catch (err) {
         console.error('Interface initialization failed:', err);
-        ui.setStatus('Could not load champion data. Refresh to try again.', 'error');
     }
 
     async function fetchJson(url) {
@@ -116,6 +113,5 @@ document.addEventListener('DOMContentLoaded', async () => {
         modelReady = false;
         requestId++;
         ui.renderRecommendations([]);
-        ui.setStatus('Prediction failed. Refresh the page to reload the model.', 'error');
     }
 });

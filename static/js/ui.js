@@ -22,7 +22,6 @@ export class UIController {
         this.recList = this.$('recommendations-list');
         this.bluePct = this.$('blue-percent');
         this.redPct = this.$('red-percent');
-        this.status = this.$('model-status');
 
         this.bindEvents();
     }
@@ -31,12 +30,6 @@ export class UIController {
         try {
             localStorage.setItem('my_personal_champion_pool', JSON.stringify(this.pool));
         } catch (e) {}
-    }
-
-    setStatus(message, state = 'ready') {
-        if (!this.status) return;
-        this.status.textContent = message;
-        this.status.className = `model-status ${state}`;
     }
 
     bindEvents() {
@@ -201,7 +194,7 @@ export class UIController {
             const safeDelta = Number.isFinite(deltaPct) ? deltaPct : 0;
             div.innerHTML = `
                 <span class="rec-name">${r.name}</span>
-                <span class="rec-diff ${safeDelta >= 0 ? 'positive' : 'negative'}">${safeDelta >= 0 ? '+' : ''}${safeDelta.toFixed(2)} pp</span>
+                <span class="rec-diff ${safeDelta >= 0 ? 'positive' : 'negative'}">${safeDelta >= 0 ? '+' : ''}${safeDelta.toFixed(2)}%</span>
             `;
             div.onclick = () => {
                 if (this.targetCard) {

@@ -1,11 +1,14 @@
-import sqlite3, time, json
+import os, sqlite3, time, json
 from collections import deque
 from riotwatcher import LolWatcher, ApiError
 from config import DB_PATH, CHAMPIONS_PATH, VALID_RIOT_ROLES
 
-api_key = ''
-routing_region = ''
-platform_region = ''
+api_key = os.environ.get('RIOT_API_KEY')
+if not api_key:
+    raise RuntimeError('Set the RIOT_API_KEY environment variable before running the crawler.')
+
+routing_region = 'americas'
+platform_region = 'na1'
 TARGET_PATCH = ''
 watcher = LolWatcher(api_key)
 min_matches, min_apps = 700000, 100

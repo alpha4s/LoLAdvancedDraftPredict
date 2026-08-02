@@ -6,7 +6,7 @@ A draft-only machine-learning project that estimates the Blue and Red teams' win
 
 - Crawls ranked Summoner's Rift matches and stores drafts in SQLite.
 - Learns champion and champion-role effects from match outcomes.
-- Uses simple draft statistics for role frequency, damage profile, off-meta picks, and selected lane matchups.
+- Uses simple draft statistics for role frequency, damage profile, off-meta picks, and selected lane matchups for top, mid, and support.
 - Supports incomplete drafts by training on randomly masked champion selections.
 - Exports a self-contained ONNX model that accepts ten champion IDs.
 - Provides a drag-and-drop draft interface with live win probabilities and champion recommendations.
@@ -30,7 +30,21 @@ Python 3.10 or newer is recommended.
 pip install torch numpy pandas scikit-learn riotwatcher onnx
 ```
 
-Get a development API key from the [Riot Developer Portal](https://developer.riotgames.com/). Configure the key locally before running the crawler, and do not commit an active key to the repository.
+Get a development API key from the [Riot Developer Portal](https://developer.riotgames.com/), then set it as an environment variable in the terminal that will run the crawler.
+
+PowerShell:
+
+```powershell
+$env:RIOT_API_KEY = "RGAPI-your-key-here"
+```
+
+macOS or Linux:
+
+```bash
+export RIOT_API_KEY="RGAPI-your-key-here"
+```
+
+The crawler reads this variable at startup, so the key does not need to be stored in a project file. Development keys expire every 24 hours and must be replaced when they expire. The included routing defaults target North America (`americas`/`na1`).
 
 ## Usage
 

@@ -61,8 +61,8 @@ class DraftPredictor:
 
         self.model = WideAndDeepDraftNN(
             num_champs=self.num_champs,
-            feature_tensors=feature_tensors,
-            embedding_dim=meta.get('embedding_dim', EMBEDDING_DIM)
+            features=feature_tensors,
+            embed_dim=meta.get('embedding_dim', EMBEDDING_DIM)
         ).to(self.device)
 
         if os.path.exists(MODEL_WEIGHTS_PATH):

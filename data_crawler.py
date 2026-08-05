@@ -3,9 +3,9 @@ from collections import deque
 from riotwatcher import LolWatcher, ApiError
 from config import DB_PATH, CHAMPIONS_PATH, VALID_RIOT_ROLES
 
-api_key = os.environ.get('RIOT_API_KEY')
+api_key = os.environ.get('RIOT_API_KEY', 'or manual key here')
 if not api_key:
-    raise RuntimeError('Set the RIOT_API_KEY environment variable before running the crawler.')
+    raise ValueError("Please provide a valid Riot API key in data_crawler.py or set RIOT_API_KEY.")
 
 routing_region = 'americas'
 platform_region = 'na1'
@@ -127,7 +127,7 @@ def main():
         curr_puuid = player_queue.popleft()
 
         try:
-            match_ids = watcher.match.matchlist_by_puuid(routing_region, curr_puuid, count=15, type='ranked', start_time=patch_start_time)
+            match_ids = watcher.match.matchlist_by_puuid(routing_region, curr_puuid, count=10, type='ranked', start_time=patch_start_time)
             time.sleep(0.05)
         except ApiError as err:
             if err.response.status_code == 429:

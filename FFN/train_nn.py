@@ -127,7 +127,7 @@ device_feature_tensors = {key: tensor.to(device) for key, tensor in feature_tens
 
 # 5. Initialize the model and training loop
 epochs = 30
-model = WideAndDeepDraftNN(num_champs=num_champs, feature_tensors=device_feature_tensors, embedding_dim=EMBEDDING_DIM).to(device)
+model = WideAndDeepDraftNN(num_champs=num_champs, features=device_feature_tensors, embed_dim=EMBEDDING_DIM).to(device)
 criterion = nn.BCELoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-4)
 

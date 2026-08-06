@@ -53,17 +53,17 @@ role_freq_dict = feature_matrices.get('role_freqs', {})
 counter_stats_dict = feature_matrices.get('counter_matrix', {})
 
 for champ, idx in champ_to_idx.items():
-    ap_ratios[idx, 0] = float(ap_ratio_dict.get(champ, 0.5))
-    ap_variances[idx, 0] = float(ap_variance_dict.get(champ, 0.0))
+    ap_ratios[idx, 0] = float(ap_ratio_dict.get(champ, .5))
+    ap_variances[idx, 0] = float(ap_variance_dict.get(champ, 0))
     for role_idx, role in enumerate(ROLES):
-        role_freqs[idx, role_idx] = float(role_freq_dict.get(champ, {}).get(role, 0.0))
+        role_freqs[idx, role_idx] = float(role_freq_dict.get(champ, {}).get(role, 0))
 
 for champ_blue, idx_blue in champ_to_idx.items():
     for champ_red, idx_red in champ_to_idx.items():
         flat_idx = idx_blue * (num_champs + 1) + idx_red
-        top_counters[flat_idx, 0] = float(counter_stats_dict.get(f"top:{champ_blue}_vs_{champ_red}", 0.0))
-        mid_counters[flat_idx, 0] = float(counter_stats_dict.get(f"mid:{champ_blue}_vs_{champ_red}", 0.0))
-        supp_counters[flat_idx, 0] = float(counter_stats_dict.get(f"support:{champ_blue}_vs_{champ_red}", 0.0))
+        top_counters[flat_idx, 0] = float(counter_stats_dict.get(f"top:{champ_blue}_vs_{champ_red}", 0))
+        mid_counters[flat_idx, 0] = float(counter_stats_dict.get(f"mid:{champ_blue}_vs_{champ_red}", 0))
+        supp_counters[flat_idx, 0] = float(counter_stats_dict.get(f"support:{champ_blue}_vs_{champ_red}", 0))
 
 feature_tensors = {
     'ap_ratios': torch.tensor(ap_ratios, dtype=torch.float32),
@@ -86,14 +86,14 @@ def extract_champion_ids(df_subset, augment_partial=False):
 
         b_idxs = [champ_to_idx.get(c, num_champs) for c in b_champs]
         r_idxs = [champ_to_idx.get(c, num_champs) for c in r_champs]
-        target = 1.0 if winning_teams[i] == 'BLUE_WIN' else 0.0
+        target = 1 if winning_teams[i] == 'BLUE_WIN' else 0
 
         # always include the complete draft
         X_deep_list.append(b_idxs + r_idxs)
         y_list.append(target)
 
         # sometimes include a partially filled draft for the live drafting UI
-        if augment_partial and np.random.rand() < 0.5:
+        if augment_partial and np.random.rand() < .5:
             n_b = np.random.randint(0, 6)
             n_r = np.random.randint(0, 6)
 
@@ -136,7 +136,7 @@ y_train_tensor = torch.tensor(y_train_raw, dtype=torch.float32).unsqueeze(1)
 train_dataset = TensorDataset(x_train_tensor, y_train_tensor)
 train_loader = DataLoader(train_dataset, batch_size=2048, shuffle=True)
 
-scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
+scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=.5)
 
 x_val = torch.tensor(x_val_raw, dtype=torch.long, device=device)
 y_val = torch.tensor(y_val_raw, dtype=torch.float32, device=device).unsqueeze(1)
@@ -156,7 +156,7 @@ for epoch in range(1, epochs + 1):
         loss = criterion(preds, by)
         loss.backward()
 
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
         optimizer.step()
 
         total_train_loss += loss.item() * bx.size(0)

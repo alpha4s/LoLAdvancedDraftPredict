@@ -53,11 +53,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const baseDeep = [...bIdxs, ...rIdxs];
         let baseProb;
-        try {
-            [baseProb] = await inferenceEngine.runInferenceBatch([baseDeep]);
-        } catch (error) {
-            if (currentRequest === requestId) handleInferenceError(error);
-            return;
+        if (bNames.every(c => !c) && rNames.every(c => !c)) {
+            baseProb = 0.5;
+        } else {
+            try {
+                [baseProb] = await inferenceEngine.runInferenceBatch([baseDeep]);
+            } catch (error) {
+                if (currentRequest === requestId) handleInferenceError(error);
+                return;
+            }
         }
         if (currentRequest !== requestId) return;
         ui.updateWinRates(baseProb);

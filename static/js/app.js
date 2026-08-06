@@ -14,33 +14,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     const ui = new UIController(onDraftChange);
 
     const version = Date.now();
-    try {
-        const [cData, mData] = await Promise.all([
-            fetchJson(`champions.json?v=${version}`),
-            fetchJson(`FFN/model_nn_metadata.json?v=${version}`)
-        ]);
+    const [cData, mData] = await Promise.all([
+        fetch(`champions.json?v=${version}`).then(res => res.json()),
+        fetch(`FFN/model_nn_metadata.json?v=${version}`).then(res => res.json())
+    ]);
 
-        champs = Array.isArray(cData) ? cData : Object.values(cData);
-        champToIdx = mData.champ_to_idx || {};
-        numChamps = Object.keys(champToIdx).length || champs.length;
+    champs = cData;
+    champToIdx = mData.champ_to_idx;
+    numChamps = champs.length;
 
-        ui.renderGrid(champs);
-        try {
-            await inferenceEngine.init(version);
-            modelReady = true;
-            onDraftChange();
-        } catch (modelError) {
-            console.error('Model initialization failed:', modelError);
-        }
-    } catch (err) {
-        console.error('Interface initialization failed:', err);
-    }
-
-    async function fetchJson(url) {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`Failed to load ${url} (${response.status})`);
-        return response.json();
-    }
+    ui.renderGrid(champs);
+    await inferenceEngine.init(version);
+    modelReady = true;
+    onDraftChange();
 
     async function onDraftChange() {
         if (!modelReady) return;
@@ -52,70 +38,38 @@ document.addEventListener('DOMContentLoaded', async () => {
         const rIdxs = rNames.map(c => champToIdx[c] ?? numChamps);
 
         const baseDeep = [...bIdxs, ...rIdxs];
-        let baseProb;
-        if (bNames.every(c => !c) && rNames.every(c => !c)) {
-            baseProb = 0.5;
-        } else {
-            try {
-                [baseProb] = await inferenceEngine.runInferenceBatch([baseDeep]);
-            } catch (error) {
-                if (currentRequest === requestId) handleInferenceError(error);
-                return;
-            }
-        }
+        const isDefault = bNames.every(c => !c) && rNames.every(c => !c);
+        const [baseProb] = isDefault ? [0.5] : await inferenceEngine.runInferenceBatch([baseDeep]);
+
         if (currentRequest !== requestId) return;
         ui.updateWinRates(baseProb);
 
-        if (!ui.targetCard) {
-            ui.renderRecommendations([]);
-            return;
-        }
+        if (!ui.targetCard) return ui.renderRecommendations([]);
 
-        const team = ui.targetCard.dataset.team;
-        const role = ui.targetCard.dataset.role;
-        const targetIdx = ROLES.indexOf(role);
-        const targetSideOffset = team === 'blue' ? 0 : 5;
-        const flatSlotIdx = targetSideOffset + targetIdx;
+        const { team, role } = ui.targetCard.dataset;
+        const flatSlotIdx = (team === 'blue' ? 0 : 5) + ROLES.indexOf(role);
 
         const pool = ui.pool.length ? ui.pool : champs;
         const picked = new Set([...bNames, ...rNames].filter(Boolean));
-        const candidates = pool.filter(c => Object.hasOwn(champToIdx, c) && !picked.has(c));
+        const candidates = pool.filter(c => champToIdx[c] !== undefined && !picked.has(c));
 
-        if (candidates.length === 0) {
-            ui.renderRecommendations([]);
-            return;
-        }
+        if (!candidates.length) return ui.renderRecommendations([]);
 
-        const batchDeep = [];
-        candidates.forEach(cand => {
-            const dSample = [...baseDeep];
-            dSample[flatSlotIdx] = champToIdx[cand] ?? numChamps;
-            batchDeep.push(dSample);
+        const batchDeep = candidates.map(cand => {
+            const sample = [...baseDeep];
+            sample[flatSlotIdx] = champToIdx[cand] ?? numChamps;
+            return sample;
         });
 
-        let candProbs;
-        try {
-            candProbs = await inferenceEngine.runInferenceBatch(batchDeep);
-        } catch (error) {
-            if (currentRequest === requestId) handleInferenceError(error);
-            return;
-        }
+        const candProbs = await inferenceEngine.runInferenceBatch(batchDeep);
         if (currentRequest !== requestId) return;
 
-        const recs = candidates.map((cand, i) => {
-            const prob = candProbs[i];
-            const delta = team === 'blue' ? (prob - baseProb) : (baseProb - prob);
-            return { name: cand, delta: delta };
-        });
+        const recs = candidates.map((name, i) => ({
+            name,
+            delta: team === 'blue' ? candProbs[i] - baseProb : baseProb - candProbs[i]
+        }));
 
         recs.sort((a, b) => b.delta - a.delta);
         ui.renderRecommendations(recs.slice(0, 10));
-    }
-
-    function handleInferenceError(error) {
-        console.error('Prediction failed:', error);
-        modelReady = false;
-        requestId++;
-        ui.renderRecommendations([]);
     }
 });

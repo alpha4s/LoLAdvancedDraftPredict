@@ -7,10 +7,8 @@ export class UIController {
         this.pool = [];
         this.champs = [];
 
-        try {
-            const savedPool = JSON.parse(localStorage.getItem('my_personal_champion_pool'));
-            this.pool = Array.isArray(savedPool) ? savedPool : [];
-        } catch (e) {}
+        const savedPool = localStorage.getItem('my_personal_champion_pool');
+        this.pool = savedPool ? JSON.parse(savedPool) : [];
 
         this.$ = id => document.getElementById(id);
         this.cards = document.querySelectorAll('.role-card');
@@ -27,9 +25,7 @@ export class UIController {
     }
 
     savePool() {
-        try {
-            localStorage.setItem('my_personal_champion_pool', JSON.stringify(this.pool));
-        } catch (e) {}
+        localStorage.setItem('my_personal_champion_pool', JSON.stringify(this.pool));
     }
 
     bindEvents() {
@@ -180,28 +176,22 @@ export class UIController {
 
     renderRecommendations(recs) {
         if (!this.recBox) return;
-        if (!recs || recs.length === 0) {
-            this.recBox.classList.add('hidden');
-            return;
-        }
+        if (!recs?.length) return this.recBox.classList.add('hidden');
 
         this.recBox.classList.remove('hidden');
-        this.recList.innerHTML = '';
-        recs.forEach(r => {
-            const div = document.createElement('div');
-            div.className = 'rec-item';
-            const deltaPct = Number(r.delta) * 100;
-            const safeDelta = Number.isFinite(deltaPct) ? deltaPct : 0;
-            div.innerHTML = `
-                <span class="rec-name">${r.name}</span>
-                <span class="rec-diff ${safeDelta >= 0 ? 'positive' : 'negative'}">${safeDelta >= 0 ? '+' : ''}${safeDelta.toFixed(2)}%</span>
-            `;
-            div.onclick = () => {
-                if (this.targetCard) {
-                    this.assign(this.targetCard, r.name);
-                }
-            };
-            this.recList.appendChild(div);
+        this.recList.innerHTML = recs.map(r => {
+            const delta = (r.delta * 100).toFixed(2);
+            const sign = r.delta >= 0 ? '+' : '';
+            const cls = r.delta >= 0 ? 'positive' : 'negative';
+            return `
+                <div class="rec-item" data-name="${r.name}">
+                    <span class="rec-name">${r.name}</span>
+                    <span class="rec-diff ${cls}">${sign}${delta}%</span>
+                </div>`;
+        }).join('');
+
+        this.recList.querySelectorAll('.rec-item').forEach(el => {
+            el.onclick = () => this.targetCard && this.assign(this.targetCard, el.dataset.name);
         });
     }
 

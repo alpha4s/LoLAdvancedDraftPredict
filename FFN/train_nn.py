@@ -28,25 +28,24 @@ df = pd.read_sql_query(
 )
 conn.close()
 
-# 2. Champion metadata mapping
+# 2. champ mapping
 with open(CHAMPIONS_PATH, 'r') as f:
     champs = sorted(json.load(f))
 champ_to_idx = {c: i for i, c in enumerate(champs)}
 num_champs = len(champs)
 
-# 3. Train / Val Split (80 / 20)
+# 3. train / test split (80 / 20)
 df_train, df_val = train_test_split(df, test_size=0.2, random_state=42)
 feature_matrices = build_feature_matrices(df_train)
 
-# 4. Convert the precomputed champion statistics into model lookup tables
+# 4. feats to tables
 ap_ratios = np.zeros((num_champs + 1, 1), dtype=np.float32)
 ap_variances = np.zeros((num_champs + 1, 1), dtype=np.float32)
 role_freqs = np.zeros((num_champs + 1, 5), dtype=np.float32)
 
-stride = num_champs + 1
-top_counters = np.zeros((stride * stride, 1), dtype=np.float32)
-mid_counters = np.zeros((stride * stride, 1), dtype=np.float32)
-supp_counters = np.zeros((stride * stride, 1), dtype=np.float32)
+top_counters = np.zeros(((num_champs + 1)**2, 1), dtype=np.float32)
+mid_counters = np.zeros(((num_champs + 1)**2, 1), dtype=np.float32)
+supp_counters = np.zeros(((num_champs + 1)**2, 1), dtype=np.float32)
 
 ap_ratio_dict = feature_matrices.get('champ_ap_ratios', {})
 ap_variance_dict = feature_matrices.get('champ_ap_variances', {})
@@ -61,7 +60,7 @@ for champ, idx in champ_to_idx.items():
 
 for champ_blue, idx_blue in champ_to_idx.items():
     for champ_red, idx_red in champ_to_idx.items():
-        flat_idx = idx_blue * stride + idx_red
+        flat_idx = idx_blue * (num_champs + 1) + idx_red
         top_counters[flat_idx, 0] = float(counter_stats_dict.get(f"top:{champ_blue}_vs_{champ_red}", 0.0))
         mid_counters[flat_idx, 0] = float(counter_stats_dict.get(f"mid:{champ_blue}_vs_{champ_red}", 0.0))
         supp_counters[flat_idx, 0] = float(counter_stats_dict.get(f"support:{champ_blue}_vs_{champ_red}", 0.0))
@@ -89,11 +88,11 @@ def extract_champion_ids(df_subset, augment_partial=False):
         r_idxs = [champ_to_idx.get(c, num_champs) for c in r_champs]
         target = 1.0 if winning_teams[i] == 'BLUE_WIN' else 0.0
 
-        # Always include the complete draft.
+        # always include the complete draft
         X_deep_list.append(b_idxs + r_idxs)
         y_list.append(target)
 
-        # Sometimes include a partially filled draft for the live drafting UI.
+        # sometimes include a partially filled draft for the live drafting UI
         if augment_partial and np.random.rand() < 0.5:
             n_b = np.random.randint(0, 6)
             n_r = np.random.randint(0, 6)
@@ -101,7 +100,7 @@ def extract_champion_ids(df_subset, augment_partial=False):
             b_partial = list(b_idxs)
             r_partial = list(r_idxs)
 
-            # Randomly remove picks from both teams.
+            # randomly remove picks from both teams
             if n_b < 5:
                 mask_b = np.random.choice(5, 5 - n_b, replace=False)
                 for idx in mask_b: b_partial[idx] = num_champs
@@ -125,7 +124,7 @@ print(f"Device: {device} | Train Samples (Augmented): {len(y_train_raw)} | Val S
 
 device_feature_tensors = {key: tensor.to(device) for key, tensor in feature_tensors.items()}
 
-# 5. Initialize the model and training loop
+# 5. initialize the model and training loop
 epochs = 30
 model = WideAndDeepDraftNN(num_champs=num_champs, features=device_feature_tensors, embed_dim=EMBEDDING_DIM).to(device)
 criterion = nn.BCELoss()
@@ -181,7 +180,7 @@ for epoch in range(1, epochs + 1):
 if best_weights is not None:
     model.load_state_dict(best_weights)
 
-# Evaluate final validation accuracy
+# evaluate final validation accuracy
 model.eval()
 with torch.no_grad():
     final_preds = (model(x_val).cpu().numpy() > 0.5).astype(int)
@@ -191,7 +190,7 @@ print("\n" + "="*50)
 print(f"End-to-End Wide & Deep Full Draft (10/10) Accuracy: {final_acc:.2%}")
 print("="*50)
 
-# Evaluate accuracy at different numbers of selected champions
+# evaluate accuracy at different numbers of selected champions
 print("\n--- Validation Breakdown by Draft Completeness Stage ---")
 val_stages_x, val_stages_y = extract_champion_ids(df_val, augment_partial=True)
 total_picks = (val_stages_x != num_champs).sum(axis=1)
@@ -227,7 +226,7 @@ metadata = {
 with open(MODEL_META_PATH, 'w') as f:
     json.dump(metadata, f, indent=4)
 
-# Export the model and its lookup tables for browser inference
+# export model and lookup tables for browser inference
 print(f"Exporting ONNX model to {ONNX_MODEL_PATH}...")
 dummy_deep = torch.zeros((1, 10), dtype=torch.long, device=device)
 

@@ -23,40 +23,44 @@ class DraftPredictor:
         
         # Build feature tensors for model lookup
         feature_matrices = load_feature_matrices()
-        ap_ratios = np.zeros((self.num_champs + 1, 1), dtype=np.float32)
-        ap_variances = np.zeros((self.num_champs + 1, 1), dtype=np.float32)
-        role_freqs = np.zeros((self.num_champs + 1, 5), dtype=np.float32)
+        zeros = lambda *shape: np.zeros(shape, dtype=np.float32)
+        get_mat = lambda key: feature_matrices.get(key, {})
+        to_tensor = lambda arr: torch.tensor(arr, dtype=torch.float32).to(self.device)
 
         stride = self.num_champs + 1
-        top_counters = np.zeros((stride * stride, 1), dtype=np.float32)
-        mid_counters = np.zeros((stride * stride, 1), dtype=np.float32)
-        supp_counters = np.zeros((stride * stride, 1), dtype=np.float32)
+        ap_ratios = zeros(self.num_champs + 1, 1)
+        ap_variances = zeros(self.num_champs + 1, 1)
+        role_freqs = zeros(self.num_champs + 1, 5)
 
-        ap_ratio_dict = feature_matrices.get('champ_ap_ratios', {})
-        ap_variance_dict = feature_matrices.get('champ_ap_variances', {})
-        role_freq_dict = feature_matrices.get('role_freqs', {})
-        counter_stats_dict = feature_matrices.get('counter_matrix', {})
+        top_counters = zeros(stride**2, 1)
+        mid_counters = zeros(stride**2, 1)
+        supp_counters = zeros(stride**2, 1)
+
+        ap_ratio_dict = get_mat('champ_ap_ratios')
+        ap_variance_dict = get_mat('champ_ap_variances')
+        role_freq_dict = get_mat('role_freqs')
+        counter_stats_dict = get_mat('counter_matrix')
 
         for champ, idx in self.champ_to_idx.items():
-            ap_ratios[idx, 0] = float(ap_ratio_dict.get(champ, 0.5))
-            ap_variances[idx, 0] = float(ap_variance_dict.get(champ, 0.0))
+            ap_ratios[idx, 0] = float(ap_ratio_dict.get(champ, .5))
+            ap_variances[idx, 0] = float(ap_variance_dict.get(champ, 0))
             for role_idx, role in enumerate(self.roles):
-                role_freqs[idx, role_idx] = float(role_freq_dict.get(champ, {}).get(role, 0.0))
+                role_freqs[idx, role_idx] = float(role_freq_dict.get(champ, {}).get(role, 0))
 
         for champ_blue, idx_blue in self.champ_to_idx.items():
             for champ_red, idx_red in self.champ_to_idx.items():
                 flat_idx = idx_blue * stride + idx_red
-                top_counters[flat_idx, 0] = float(counter_stats_dict.get(f"top:{champ_blue}_vs_{champ_red}", 0.0))
-                mid_counters[flat_idx, 0] = float(counter_stats_dict.get(f"mid:{champ_blue}_vs_{champ_red}", 0.0))
-                supp_counters[flat_idx, 0] = float(counter_stats_dict.get(f"support:{champ_blue}_vs_{champ_red}", 0.0))
+                top_counters[flat_idx, 0] = float(counter_stats_dict.get(f"top:{champ_blue}_vs_{champ_red}", 0))
+                mid_counters[flat_idx, 0] = float(counter_stats_dict.get(f"mid:{champ_blue}_vs_{champ_red}", 0))
+                supp_counters[flat_idx, 0] = float(counter_stats_dict.get(f"support:{champ_blue}_vs_{champ_red}", 0))
 
         feature_tensors = {
-            'ap_ratios': torch.tensor(ap_ratios, dtype=torch.float32).to(self.device),
-            'ap_variances': torch.tensor(ap_variances, dtype=torch.float32).to(self.device),
-            'role_freqs': torch.tensor(role_freqs, dtype=torch.float32).to(self.device),
-            'top_counters': torch.tensor(top_counters, dtype=torch.float32).to(self.device),
-            'mid_counters': torch.tensor(mid_counters, dtype=torch.float32).to(self.device),
-            'supp_counters': torch.tensor(supp_counters, dtype=torch.float32).to(self.device)
+            'ap_ratios': to_tensor(ap_ratios),
+            'ap_variances': to_tensor(ap_variances),
+            'role_freqs': to_tensor(role_freqs),
+            'top_counters': to_tensor(top_counters),
+            'mid_counters': to_tensor(mid_counters),
+            'supp_counters': to_tensor(supp_counters)
         }
 
         self.model = WideAndDeepDraftNN(

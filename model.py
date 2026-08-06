@@ -16,15 +16,17 @@ class WideAndDeepDraftNN(nn.Module):
         self.champ_embed = nn.Embedding(num_champs + 1, embed_dim, padding_idx=num_champs)
         nn.init.normal_(self.champ_embed.weight, std=0.01)
 
+        from_pretrained = lambda name: nn.Embedding.from_pretrained(features[name], freeze=True)
+
         # feature engineering champ vecs [num_champs+1, 5]
-        self.ap_ratios = nn.Embedding.from_pretrained(features['ap_ratios'], freeze=True)
-        self.ap_variances = nn.Embedding.from_pretrained(features['ap_variances'], freeze=True)
-        self.role_freqs = nn.Embedding.from_pretrained(features['role_freqs'], freeze=True) 
+        self.ap_ratios = from_pretrained('ap_ratios')
+        self.ap_variances = from_pretrained('ap_variances')
+        self.role_freqs = from_pretrained('role_freqs')
 
         # matchup champ vecs [(num_champs+1)^2, 1]
-        self.top_counters = nn.Embedding.from_pretrained(features['top_counters'], freeze=True) 
-        self.mid_counters = nn.Embedding.from_pretrained(features['mid_counters'], freeze=True)   
-        self.supp_counters = nn.Embedding.from_pretrained(features['supp_counters'], freeze=True) 
+        self.top_counters = from_pretrained('top_counters')
+        self.mid_counters = from_pretrained('mid_counters')
+        self.supp_counters = from_pretrained('supp_counters') 
 
         num_extra_features = NUM_EXTRA_FEATURES
 
@@ -50,65 +52,49 @@ class WideAndDeepDraftNN(nn.Module):
     def extract_graph_features(self, x_deep):
         bsz = x_deep.size(0)
         
-        # [batch, 5]
-        blue_ids = x_deep[:, :5]
-        red_ids = x_deep[:, 5:]
-        blue_ap = self.ap_ratios(blue_ids).squeeze(-1)
-        blue_var = self.ap_variances(blue_ids).squeeze(-1)
-        red_ap = self.ap_ratios(red_ids).squeeze(-1)
-        red_var = self.ap_variances(red_ids).squeeze(-1)
+        b_ids = x_deep[:, :5]
+        r_ids = x_deep[:, 5:]
+        b_ap = self.ap_ratios(b_ids).squeeze(-1)
+        b_var = self.ap_variances(b_ids).squeeze(-1)
+        r_ap = self.ap_ratios(r_ids).squeeze(-1)
+        r_var = self.ap_variances(r_ids).squeeze(-1)
 
-        # sets easy to work with data lists
-        blue_rf_cols = []
-        red_rf_cols = []
-        wide_blue_cols = []
-        wide_red_cols = []
-        for i in range(5):
-            blue_rf_cols.append(self.role_freqs(blue_ids[:, i])[:, i])
-            red_rf_cols.append(self.role_freqs(red_ids[:, i])[:, i])
-            wide_blue_cols.append(self.wide_champ_roles(blue_ids[:, i])[:, i])
-            wide_red_cols.append(self.wide_champ_roles(red_ids[:, i])[:, i])
+        b_rf = self.role_freqs(b_ids).diagonal(dim1=1, dim2=2)
+        r_rf = self.role_freqs(r_ids).diagonal(dim1=1, dim2=2)
+        wide_b = self.wide_champ_roles(b_ids).diagonal(dim1=1, dim2=2).sum(dim=1, keepdim=True)
+        wide_r = self.wide_champ_roles(r_ids).diagonal(dim1=1, dim2=2).sum(dim=1, keepdim=True)
 
-        # turn lists into tensors
-        blue_rf = torch.stack(blue_rf_cols, dim=1)
-        red_rf = torch.stack(red_rf_cols, dim=1)
-        wide_blue = torch.stack(wide_blue_cols, dim=1).sum(dim=1, keepdim=True)
-        wide_red = torch.stack(wide_red_cols, dim=1).sum(dim=1, keepdim=True)
+        b_off = (0.2 - b_rf).clamp(min=0.0) * (b_ids != self.num_champs).float()
+        r_off = (0.2 - r_rf).clamp(min=0.0) * (r_ids != self.num_champs).float()
 
-        # off meta penalty
-        blue_off = (0.2 - blue_rf).clamp(min=0.0) * (blue_ids != self.num_champs).float()
-        red_off = (0.2 - red_rf).clamp(min=0.0) * (red_ids != self.num_champs).float()
+        b_slot_feats = torch.stack([b_ap, b_var, b_rf, b_off], dim=-1).view(bsz, 20)
+        r_slot_feats = torch.stack([r_ap, r_var, r_rf, r_off], dim=-1).view(bsz, 20)
 
-        blue_slot_feats = torch.stack([blue_ap, blue_var, blue_rf, blue_off], dim=-1).view(bsz, 20)
-        red_slot_feats = torch.stack([red_ap, red_var, red_rf, red_off], dim=-1).view(bsz, 20)
-
-        # look up top, mid, supp matchups
         stride = self.num_champs + 1
+        b_top = self.top_counters(b_ids[:, 0] * stride + r_ids[:, 0]).squeeze(-1)
+        r_top = self.top_counters(r_ids[:, 0] * stride + b_ids[:, 0]).squeeze(-1)
 
-        b_top = self.top_counters(blue_ids[:, 0] * stride + red_ids[:, 0]).squeeze(-1)
-        r_top = self.top_counters(red_ids[:, 0] * stride + blue_ids[:, 0]).squeeze(-1)
+        b_mid = self.mid_counters(b_ids[:, 2] * stride + r_ids[:, 2]).squeeze(-1)
+        r_mid = self.mid_counters(r_ids[:, 2] * stride + b_ids[:, 2]).squeeze(-1)
 
-        b_mid = self.mid_counters(blue_ids[:, 2] * stride + red_ids[:, 2]).squeeze(-1)
-        r_mid = self.mid_counters(red_ids[:, 2] * stride + blue_ids[:, 2]).squeeze(-1)
-
-        b_supp = self.supp_counters(blue_ids[:, 4] * stride + red_ids[:, 4]).squeeze(-1)
-        r_supp = self.supp_counters(red_ids[:, 4] * stride + blue_ids[:, 4]).squeeze(-1)
+        b_supp = self.supp_counters(b_ids[:, 4] * stride + r_ids[:, 4]).squeeze(-1)
+        r_supp = self.supp_counters(r_ids[:, 4] * stride + b_ids[:, 4]).squeeze(-1)
 
         lane_counters = torch.stack([b_top - r_top, b_mid - r_mid, b_supp - r_supp], dim=1)
 
-        b_ap_total = blue_ap.sum(dim=1, keepdim=True)
-        r_ap_total = red_ap.sum(dim=1, keepdim=True)
+        b_ap_total = b_ap.sum(dim=1, keepdim=True)
+        r_ap_total = r_ap.sum(dim=1, keepdim=True)
         ap_balance_delta = b_ap_total - r_ap_total
 
-        x_features = torch.cat([blue_slot_feats, red_slot_feats, lane_counters, ap_balance_delta], dim=1)
-        return x_features, wide_blue, wide_red
+        x_features = torch.cat([b_slot_feats, r_slot_feats, lane_counters, ap_balance_delta], dim=1)
+        return x_features, wide_b, wide_r
 
     def forward(self, x_deep):
         bsz = x_deep.size(0)
         embeds = self.champ_embed(x_deep).view(bsz, -1)
-        x_features, wide_blue, wide_red = self.extract_graph_features(x_deep)
+        x_features, wide_b, wide_r = self.extract_graph_features(x_deep)
 
-        wide_out = self.wide(x_features) + (wide_blue - wide_red)
+        wide_out = self.wide(x_features) + (wide_b - wide_r)
 
         deep_in = torch.cat([embeds, x_features], dim=1)
         deep_out = self.deep(deep_in)

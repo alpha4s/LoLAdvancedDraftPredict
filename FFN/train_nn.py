@@ -21,11 +21,7 @@ print("=== TRAINING WIDE-AND-DEEP DRAFT MODEL ===")
 
 # 1. Load data directly from SQLite database
 conn = sqlite3.connect(DB_PATH)
-df = pd.read_sql_query(
-    "SELECT * FROM matches WHERE game_version LIKE ?",
-    conn,
-    params=("16%",)
-)
+df = pd.read_sql_query("SELECT * FROM matches WHERE game_version LIKE ?", conn, params=("16%",))
 conn.close()
 
 # 2. champ mapping
@@ -39,18 +35,22 @@ df_train, df_val = train_test_split(df, test_size=0.2, random_state=42)
 feature_matrices = build_feature_matrices(df_train)
 
 # 4. feats to tables
-ap_ratios = np.zeros((num_champs + 1, 1), dtype=np.float32)
-ap_variances = np.zeros((num_champs + 1, 1), dtype=np.float32)
-role_freqs = np.zeros((num_champs + 1, 5), dtype=np.float32)
+zeros = lambda *shape: np.zeros(shape, dtype=np.float32)
 
-top_counters = np.zeros(((num_champs + 1)**2, 1), dtype=np.float32)
-mid_counters = np.zeros(((num_champs + 1)**2, 1), dtype=np.float32)
-supp_counters = np.zeros(((num_champs + 1)**2, 1), dtype=np.float32)
+ap_ratios = zeros(num_champs + 1, 1)
+ap_variances = zeros(num_champs + 1, 1)
+role_freqs = zeros(num_champs + 1, 5)
 
-ap_ratio_dict = feature_matrices.get('champ_ap_ratios', {})
-ap_variance_dict = feature_matrices.get('champ_ap_variances', {})
-role_freq_dict = feature_matrices.get('role_freqs', {})
-counter_stats_dict = feature_matrices.get('counter_matrix', {})
+top_counters = zeros((num_champs + 1)**2, 1)
+mid_counters = zeros((num_champs + 1)**2, 1)
+supp_counters = zeros((num_champs + 1)**2, 1)
+
+get_mat = lambda key: feature_matrices.get(key, {})
+
+ap_ratio_dict = get_mat('champ_ap_ratios')
+ap_variance_dict = get_mat('champ_ap_variances')
+role_freq_dict = get_mat('role_freqs')
+counter_stats_dict = get_mat('counter_matrix')
 
 for champ, idx in champ_to_idx.items():
     ap_ratios[idx, 0] = float(ap_ratio_dict.get(champ, .5))
@@ -65,19 +65,22 @@ for champ_blue, idx_blue in champ_to_idx.items():
         mid_counters[flat_idx, 0] = float(counter_stats_dict.get(f"mid:{champ_blue}_vs_{champ_red}", 0))
         supp_counters[flat_idx, 0] = float(counter_stats_dict.get(f"support:{champ_blue}_vs_{champ_red}", 0))
 
+to_tensor = lambda arr: torch.tensor(arr, dtype=torch.float32)
+
 feature_tensors = {
-    'ap_ratios': torch.tensor(ap_ratios, dtype=torch.float32),
-    'ap_variances': torch.tensor(ap_variances, dtype=torch.float32),
-    'role_freqs': torch.tensor(role_freqs, dtype=torch.float32),
-    'top_counters': torch.tensor(top_counters, dtype=torch.float32),
-    'mid_counters': torch.tensor(mid_counters, dtype=torch.float32),
-    'supp_counters': torch.tensor(supp_counters, dtype=torch.float32)
+    'ap_ratios': to_tensor(ap_ratios),
+    'ap_variances': to_tensor(ap_variances),
+    'role_freqs': to_tensor(role_freqs),
+    'top_counters': to_tensor(top_counters),
+    'mid_counters': to_tensor(mid_counters),
+    'supp_counters': to_tensor(supp_counters)
 }
 
 from torch.utils.data import TensorDataset, DataLoader
 
 def extract_champion_ids(df_subset, augment_partial=False):
-    X_deep_list, y_list = [], []
+    X_deep_list = []
+    y_list = []
     winning_teams = df_subset['winning_team'].to_numpy()
 
     for i, (_, row) in enumerate(df_subset.iterrows()):
@@ -149,7 +152,8 @@ for epoch in range(1, epochs + 1):
     model.train()
     total_train_loss = 0.0
     for bx, by in train_loader:
-        bx, by = bx.to(device), by.to(device)
+        bx = bx.to(device)
+        by = by.to(device)
 
         optimizer.zero_grad()
         preds = model(bx)
@@ -220,7 +224,7 @@ metadata = {
     'champion_names': champs,
     'champ_to_idx': champ_to_idx,
     'accuracy': float(final_acc),
-    'model_type': 'PyTorch_WideAndDeepDraftNN_EndToEnd',
+    'model_type': 'WideAndDeepDraftNN',
     'embedding_dim': EMBEDDING_DIM
 }
 with open(MODEL_META_PATH, 'w') as f:

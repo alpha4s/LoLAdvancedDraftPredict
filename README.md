@@ -1,10 +1,10 @@
 # League of Legends Draft Win Predictor
 
-A draft-only machine-learning project that estimates the Blue and Red teams' win probabilities from their selected champions. It collects recent ranked matches with the Riot Games API, trains a small PyTorch wide-and-deep model, exports it to ONNX, and runs predictions locally in the browser.
+A draft only machine learning project that estimates the Blue and Red teams' win probabilities purely based on champion picks. It collects patch 26.15 solo queue ranked matches (plat, emerald, dia only) with the Riot Games API, trains a small PyTorch wide and deep model, exports it to ONNX, and runs predictions locally in the browser.
 
 ## What It Does
 
-- Crawls ranked Summoner's Rift matches and stores drafts in SQLite.
+- Crawls ranked solo queue matches (plat, emerald, dia only) and stores drafts in SQLite.
 - Learns champion and champion-role effects from match outcomes.
 - Uses simple draft statistics for role frequency, damage profile, off-meta picks, and selected lane matchups for top, mid, and support.
 - Supports incomplete drafts by training on randomly masked champion selections.
@@ -15,12 +15,12 @@ A draft-only machine-learning project that estimates the Blue and Red teams' win
 
 The model has two paths:
 
-- **Wide path:** learns a direct contribution for each champion in each role.
+- **Wide path:** learns a direct contribution for each champion in each role. How much that pick alone shifts the win probability.
 - **Deep path:** converts the ten selected champions into learned vectors, combines them with precomputed draft statistics, and passes them through a small `64 -> 32 -> 1` neural network using LayerNorm and GELU.
 
-The precomputed statistics are stored as frozen lookup tables inside the model. Because those lookups are included in the ONNX export, the browser only needs to send champion IDs and cannot disagree with Python about feature calculations.
+The precomputed statistics are stored as frozen lookup tables inside the model. Because those lookups are included in the ONNX export, the browser only needs to send champion IDs there will be no mismatch with the python code.
 
-This model intentionally uses draft information only. It does not know player skill, team communication, item choices, or events that occur during the match, so its accuracy should be interpreted as draft-level signal rather than a complete game prediction.
+This model intentionally uses draft information only. It does not know player skill, team communication, item choices, or events that occur during the match. It is a draft predictor only.
 
 ## Setup
 
@@ -30,7 +30,7 @@ Python 3.10 or newer is recommended.
 pip install torch numpy pandas scikit-learn riotwatcher onnx
 ```
 
-Get a development API key from the [Riot Developer Portal](https://developer.riotgames.com/), then set it as an environment variable in the terminal that will run the crawler.
+Get a development API key from the [Riot Developer Portal](https://developer.riotgames.com/), then set it as an environment variable in the terminal that will run the crawler or put directly into crawler.
 
 PowerShell:
 
@@ -38,8 +38,7 @@ PowerShell:
 $env:RIOT_API_KEY = "RGAPI-your-key-here"
 ```
 
-
-The crawler reads this variable at startup, so the key does not need to be stored in a project file. Development keys expire every 24 hours and must be replaced when they expire. The included routing defaults target North America (`americas`/`na1`).
+The crawler can read this variable at startup, so the key does not need to be stored in a project file. Development keys expire every 24 hours and must be replaced when they expire. The included routing defaults target North America (`americas`/`na1`).
 
 ## Usage
 

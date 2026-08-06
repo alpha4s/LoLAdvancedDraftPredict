@@ -3,9 +3,9 @@ from collections import deque
 from riotwatcher import LolWatcher, ApiError
 from config import DB_PATH, CHAMPIONS_PATH, VALID_RIOT_ROLES
 
-api_key = os.environ.get('RIOT_API_KEY', 'or manual key here')
-if not api_key:
-    raise ValueError("Please provide a valid Riot API key in data_crawler.py or set RIOT_API_KEY.")
+api_key = 'RGAPI-your-key-here'
+if not api_key or api_key == 'RGAPI-your-key-here':
+    raise ValueError("Paste your Riot API key into data_crawler.py line 6 before running.")
 
 routing_region = 'americas'
 platform_region = 'na1'

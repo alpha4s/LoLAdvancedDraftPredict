@@ -18,7 +18,7 @@ The model has two paths:
 - **Wide path:** learns a direct contribution for each champion in each role. How much that pick alone shifts the win probability.
 - **Deep path:** converts the ten selected champions into learned vectors, combines them with precomputed draft statistics, and passes them through a small `64 -> 32 -> 1` neural network using LayerNorm and GELU.
 
-The precomputed statistics are stored as frozen lookup tables inside the model. Because those lookups are included in the ONNX export, the browser only needs to send champion IDs there will be no mismatch with the python code.
+The precomputed statistics are stored as frozen lookup tables inside the model. Because those lookups are included in the ONNX export, the browser only needs to send champion IDs eliminating any possibility of mismatch with the Python feature calculations.
 
 This model intentionally uses draft information only. It does not know player skill, team communication, item choices, or events that occur during the match. It is a draft predictor only.
 
@@ -48,7 +48,7 @@ The crawler can read this variable at startup, so the key does not need to be st
 python data_crawler.py
 ```
 
-The crawler creates `league_data.db`, resumes from previously processed players, and collects champion drafts plus the participant damage statistics used to create champion damage profiles. The current training pipeline keeps only matches whose game version begins with `16` so older seasons do not influence the model.
+The crawler creates `league_data.db`, resumes from previously processed players, and collects champion drafts plus the participant damage statistics used to create champion damage profiles. The current training pipeline keeps only matches whose game version begins with `16` (season 2026) so older seasons do not influence the model.
 
 ### 2. Train and export the model
 

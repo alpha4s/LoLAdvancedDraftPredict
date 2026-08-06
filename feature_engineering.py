@@ -15,7 +15,8 @@ def build_feature_matrices(df_train):
                         champ_match_ap[champ].append(float(magic or 0) / total_dmg)
 
     # 2. Compute mean AP damage ratio and damage variance per champion
-    ap_ratios, ap_variances = {}, {}
+    ap_ratios = {}
+    ap_variances = {}
     for champ, ratios in champ_match_ap.items():
         if ratios:
             ap_ratios[champ] = float(np.mean(ratios))
@@ -51,8 +52,8 @@ def build_feature_matrices(df_train):
     # 5. Load champion list and compute role play frequencies
     all_champs = []
     if os.path.exists(CHAMPIONS_PATH):
-        with open(CHAMPIONS_PATH, 'r') as f:
-            all_champs = json.load(f)
+        with open(CHAMPIONS_PATH, 'r') as file:
+            all_champs = json.load(file)
     else:
         all_champs = list(role_counts.keys())
 
@@ -78,16 +79,16 @@ def build_feature_matrices(df_train):
         'role_freqs': role_freqs,
         'counter_matrix': counter_mat
     }
-    with open(FEATURE_CACHE_PATH, 'w') as f:
-        json.dump(data, f, indent=4)
+    with open(FEATURE_CACHE_PATH, 'w') as file:
+        json.dump(data, file, indent=4)
     print(f"Cached feature matrices to {FEATURE_CACHE_PATH}")
     return data
 
 def load_feature_matrices(df_train=None):
     """Load cached feature matrices from JSON or rebuild if missing."""
     if df_train is None and os.path.exists(FEATURE_CACHE_PATH):
-        with open(FEATURE_CACHE_PATH, 'r') as f:
-            return json.load(f)
+        with open(FEATURE_CACHE_PATH, 'r') as file:
+            return json.load(file)
     return build_feature_matrices(df_train)
 
 def extract_draft_features(blue_champs, red_champs, feature_matrices=None):
